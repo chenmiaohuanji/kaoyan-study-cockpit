@@ -14,16 +14,16 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "考研学习驾驶舱",
-  description: "面向 2028 考研网络安全方向的目标、计划、任务、成绩和风险可视化仪表盘。",
+  description: "面向 2028 考研网络安全方向的今日任务、专注学习、完成记录和周报反馈工具。",
   openGraph: {
     title: "考研学习驾驶舱",
-    description: "目标、计划、任务、成绩和阶段风险统一可视化。",
+    description: "把今日任务、专注学习、完成记录和周报反馈收敛成长期可用的学习闭环。",
     images: ["/og.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "考研学习驾驶舱",
-    description: "面向 2028 考研网络安全方向的学习驾驶舱。",
+    description: "面向 2028 考研网络安全方向的每日学习闭环。",
     images: ["/og.png"],
   },
   icons: {

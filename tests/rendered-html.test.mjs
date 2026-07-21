@@ -33,28 +33,37 @@ test("server-renders the postgraduate study cockpit", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>考研学习驾驶舱<\/title>/i);
-  assert.match(html, /2028 考研 · 网络安全方向/);
-  assert.match(html, /今日任务队列/);
-  assert.match(html, /各科进度与状态/);
-  assert.match(html, /目标院校差距/);
-  assert.match(html, /电子科技大学/);
-  assert.match(html, /目标分数拆解/);
+  assert.match(html, /目标-计划-执行-反馈-调整/);
+  assert.match(html, /今日最重要/);
+  assert.match(html, /三项任务/);
+  assert.match(html, /科目推进/);
+  assert.match(html, /当前最大风险/);
   assert.match(html, /学习健康度/);
+  assert.match(html, /408 数据结构复习间隔过长/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
-test("removes starter preview code and wires sharing metadata", async () => {
-  const [page, layout, packageJson] = await Promise.all([
+test("wires product interactions and removes starter preview code", async () => {
+  const [page, cockpit, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/StudyCockpit.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /考研学习驾驶舱/);
-  assert.match(page, /daysUntilExam/);
+  assert.match(page, /StudyCockpit/);
+  assert.match(cockpit, /普通模式/);
+  assert.match(cockpit, /专注模式/);
+  assert.match(cockpit, /复盘模式/);
+  assert.match(cockpit, /weight \* task\.lag \* task\.forgetRisk \* task\.urgency/);
+  assert.match(cockpit, /window\.localStorage/);
+  assert.match(cockpit, /导出学习记录/);
+  assert.match(cockpit, /课程进度/);
+  assert.match(cockpit, /综合掌握度/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /\/og\.png/);
   assert.doesNotMatch(page, /SkeletonPreview|codex-preview/);
+  assert.doesNotMatch(cockpit, /SkeletonPreview|codex-preview/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview|_sites-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
