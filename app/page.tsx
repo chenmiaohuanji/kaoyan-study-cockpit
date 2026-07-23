@@ -1,5 +1,5 @@
-import { StudyCockpit } from "./StudyCockpit";
+import { KaoyanDashboard } from "./KaoyanDashboard";
 
 export default function Home() {
-  return <StudyCockpit />;
+  return <KaoyanDashboard />;
 }

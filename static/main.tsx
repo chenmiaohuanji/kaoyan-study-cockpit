@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "../app/globals.css";
-import { StudyCockpit } from "../app/StudyCockpit";
+import { KaoyanDashboard } from "../app/KaoyanDashboard";
 
 const root = document.getElementById("root");
 
@@ -12,6 +12,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <StudyCockpit />
+    <KaoyanDashboard />
   </StrictMode>,
 );
