@@ -75,6 +75,10 @@ test("wires the complete product workflow and responsive design system", async (
   assert.match(dashboard, /录入一次测试成绩/);
   assert.match(dashboard, /添加团队任务/);
   assert.match(dashboard, /addPlanItem/);
+  assert.match(dashboard, /applyLaunchWeekPlan/);
+  assert.match(dashboard, /载入启动周/);
+  assert.match(dashboard, /28 届全过程路线/);
+  assert.match(dashboard, /所有实际时长、正确率和完成率仍由你手工录入/);
   assert.match(dashboard, /addStudyRecord/);
   assert.match(dashboard, /reviewMistake/);
   assert.match(dashboard, /addScore/);
@@ -93,6 +97,11 @@ test("wires the complete product workflow and responsive design system", async (
   assert.match(data, /ScoreRecord/);
   assert.match(data, /WeekPlanDay/);
   assert.match(data, /GoalSettings/);
+  assert.match(data, /2026-07-26/);
+  assert.match(data, /2027-12-31/);
+  assert.match(data, /monthlyRoadmap/);
+  assert.match(data, /launchWeekPlan/);
+  assert.match(data, /具体考试日期以教育部正式公告为准/);
   assert.match(styles, /\[data-theme="dark"\]/);
   assert.match(styles, /prefers-reduced-motion/);
   assert.match(styles, /\.mobile-bottom-nav/);
@@ -109,7 +118,7 @@ test("wires the complete product workflow and responsive design system", async (
   assert.doesNotMatch(dashboard, /SkeletonPreview|codex-preview/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview|_sites-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.doesNotMatch(data, /错题回炉|全科模拟|层次分析法|TOPSIS/);
+  assert.doesNotMatch(data, /层次分析法|TOPSIS/);
 
   await assert.rejects(access(previewRoot));
   await access(new URL("public/og.png", templateRoot));

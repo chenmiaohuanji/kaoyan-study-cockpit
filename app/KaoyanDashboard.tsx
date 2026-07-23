@@ -74,10 +74,12 @@ import {
 import {
   initialTasks,
   initialGoalSettings,
+  launchWeekPlan,
+  longTermPhases,
   mistakes as initialMistakes,
   modelingTasks as initialModelingTasks,
+  monthlyRoadmap,
   scoreTrend as initialScoreRecords,
-  stages,
   subjectChapters as initialSubjectChapters,
   subjects,
   weekPlan as initialWeekPlan,
@@ -113,6 +115,7 @@ type ConfirmAction =
   | { type: "delete-task"; taskId: number }
   | { type: "delete-mistake"; mistakeId: number }
   | { type: "delete-score"; scoreId: number }
+  | { type: "apply-launch-week" }
   | { type: "reset-data" }
   | null;
 type NotificationNotice = {
@@ -217,7 +220,7 @@ export function KaoyanDashboard() {
   const [focusSeconds, setFocusSeconds] = useState(25 * 60);
   const [focusRunning, setFocusRunning] = useState(false);
   const [focusNoteOpen, setFocusNoteOpen] = useState(false);
-  const [planView, setPlanView] = useState<PlanView>("week");
+  const [planView, setPlanView] = useState<PlanView>("stage");
   const [activeSubjectId, setActiveSubjectId] = useState("math");
   const [expandedGroup, setExpandedGroup] = useState("高等数学");
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("周报");
@@ -677,6 +680,24 @@ export function KaoyanDashboard() {
     setToast(values.addToToday ? "计划已创建，并同步到今日任务" : "计划已加入本周");
   }
 
+  function applyLaunchWeekPlan() {
+    setWeekPlanData(cloneWeekPlan(launchWeekPlan));
+    setPlanView("week");
+    setConfirmAction(null);
+    setToast("7 月 26 日启动周已载入，实际完成数据仍为 0");
+  }
+
+  function requestLaunchWeekPlan() {
+    const hasExistingPlan = weekPlanData.some(
+      (day) => day.tasks.length || day.planned || day.actual,
+    );
+    if (hasExistingPlan) {
+      setConfirmAction({ type: "apply-launch-week" });
+      return;
+    }
+    applyLaunchWeekPlan();
+  }
+
   function addStudyRecord(values: {
     subjectId: string;
     chapterId: string;
@@ -1029,6 +1050,7 @@ export function KaoyanDashboard() {
                 currentStage={goalSettings.stage}
                 days={weekPlanData}
                 onAdd={() => setEntryDialog("plan")}
+                onApplyLaunchWeek={requestLaunchWeekPlan}
                 onViewChange={setPlanView}
               />
             ) : null}
@@ -1222,8 +1244,10 @@ export function KaoyanDashboard() {
               ? "删除后，该任务的今日记录也会一并移除。"
               : confirmAction.type === "delete-mistake"
                 ? "删除后，该题的复习次数与间隔安排也会一并移除。"
-                : confirmAction.type === "delete-score"
+              : confirmAction.type === "delete-score"
                   ? "删除后，成绩趋势、预测分与报告指标会立即重新计算。"
+                  : confirmAction.type === "apply-launch-week"
+                    ? "这会用 7 月 26 日启动周替换当前周计划。计划时长会写入，实际时长与完成状态仍保持为 0。"
                   : "这会清除当前浏览器中的全部学习记录，操作不可撤销。"
           }
           onCancel={() => setConfirmAction(null)}
@@ -1234,6 +1258,8 @@ export function KaoyanDashboard() {
               deleteMistake(confirmAction.mistakeId);
             } else if (confirmAction.type === "delete-score") {
               deleteScore(confirmAction.scoreId);
+            } else if (confirmAction.type === "apply-launch-week") {
+              applyLaunchWeekPlan();
             } else {
               resetData();
             }
@@ -1245,6 +1271,8 @@ export function KaoyanDashboard() {
                 ? "确认删除错题？"
               : confirmAction.type === "delete-score"
                 ? "确认删除成绩？"
+                : confirmAction.type === "apply-launch-week"
+                  ? "载入 7 月 26 日启动周？"
                   : "确认清空数据？"
           }
         />
@@ -2161,12 +2189,14 @@ function PlanPage({
   currentStage,
   days,
   onAdd,
+  onApplyLaunchWeek,
   onViewChange,
 }: {
   activeView: PlanView;
   currentStage: string;
   days: WeekPlanDay[];
   onAdd: () => void;
+  onApplyLaunchWeek: () => void;
   onViewChange: (view: PlanView) => void;
 }) {
   const currentDay =
@@ -2176,7 +2206,7 @@ function PlanPage({
 
   return (
     <div className="page-stack page-enter">
-      <section className="toolbar-row">
+      <section className="toolbar-row plan-toolbar">
         <div className="segmented-control" aria-label="计划视图">
           {(["stage", "month", "week", "day"] as PlanView[]).map((item) => (
             <button
@@ -2190,13 +2220,13 @@ function PlanPage({
           ))}
         </div>
         <div className="toolbar-actions">
-          <button
-            className="secondary-button"
-            onClick={() => onViewChange("month")}
-            type="button"
-          >
+          <span className="plan-range-label">
+            <CalendarRange size={16} />
+            2026.07.26 - 2027.12
+          </span>
+          <button className="secondary-button" onClick={onApplyLaunchWeek} type="button">
             <CalendarDays size={16} />
-            {formatYearMonth(new Date())}
+            载入启动周
           </button>
           <button className="primary-button" onClick={onAdd} type="button">
             <Plus size={16} />
@@ -2214,78 +2244,125 @@ function PlanPage({
 }
 
 function StagePlan({ currentStage }: { currentStage: string }) {
-  const selectedStage = stages.find((stage) => stage.name === currentStage);
+  const today = new Date();
+  const activePhase =
+    longTermPhases.find(
+      (phase) =>
+        today >= new Date(`${phase.start}T00:00:00+08:00`) &&
+        today <= new Date(`${phase.end}T23:59:59+08:00`),
+    ) ??
+    longTermPhases.find(
+      (phase) => today < new Date(`${phase.start}T00:00:00+08:00`),
+    ) ??
+    longTermPhases.at(-1);
+  const [selectedPhaseId, setSelectedPhaseId] = useState(
+    activePhase?.id ?? longTermPhases[0].id,
+  );
+  const selectedPhase =
+    longTermPhases.find((phase) => phase.id === selectedPhaseId) ??
+    longTermPhases[0];
+
   return (
     <section className="plan-stage-layout">
       <article className="panel stage-timeline">
-        <PanelHeader eyebrow="全过程时间轴" title="从基础准备到考前冲刺" />
+        <PanelHeader
+          eyebrow="28 届全过程路线"
+          title="2026 年 7 月 26 日起步 · 2027 年 12 月下旬初试"
+        />
+        <div className="plan-template-note">
+          <CalendarRange size={17} />
+          <div>
+            <strong>这是一条可执行的计划路线，不是完成记录</strong>
+            <span>初试具体日期待教育部公布；所有实际时长、正确率和完成率仍由你手工录入。</span>
+          </div>
+        </div>
         <div className="stage-list">
-          {stages.map((stage, index) => (
-            <div
-              className={`stage-item ${stage.name === currentStage ? "active" : ""}`}
-              key={stage.id}
-            >
-              <div className="stage-marker">
-                <span>{index + 1}</span>
-              </div>
-              <div className="stage-copy">
-                <div className="stage-head">
-                  <div>
-                    <strong>{stage.name}</strong>
-                    <span>{stage.date}</span>
+          {longTermPhases.map((phase, index) => {
+            const phaseStatus = getPhaseStatus(phase.start, phase.end);
+            return (
+              <button
+                aria-pressed={selectedPhase.id === phase.id}
+                className={`stage-item ${
+                  selectedPhase.id === phase.id ? "active" : ""
+                }`}
+                key={phase.id}
+                onClick={() => setSelectedPhaseId(phase.id)}
+                type="button"
+              >
+                <div className="stage-marker">
+                  <span>{index + 1}</span>
+                </div>
+                <div className="stage-copy">
+                  <div className="stage-head">
+                    <div>
+                      <strong>{phase.name}</strong>
+                      <span>{phase.date} · 每周 {phase.weeklyHours}</span>
+                    </div>
+                    <StatusTag
+                      label={phaseStatus.label}
+                      tone={phaseStatus.tone}
+                    />
                   </div>
-                  <StatusTag
-                    label={stage.status}
-                    tone={stage.name === currentStage ? "blue" : "gray"}
-                  />
+                  <p>{phase.goal}</p>
+                  <div className="stage-focus">
+                    {phase.focus.map((focus) => (
+                      <span key={focus}>{focus}</span>
+                    ))}
+                  </div>
+                  <div className="stage-milestone">
+                    <Flag size={13} />
+                    阶段验收：{phase.deliverables.join("、")}
+                  </div>
                 </div>
-                <p>{stage.goal}</p>
-                <div className="stage-focus">
-                  {stage.focus.map((focus) => (
-                    <span key={focus}>{focus}</span>
-                  ))}
-                </div>
-                <ProgressBar
-                  tone={stage.name === currentStage ? "blue" : "gray"}
-                  value={stage.progress}
-                />
-              </div>
-            </div>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </article>
       <aside className="panel stage-overview">
-        <span className="eyebrow">当前阶段</span>
-        <h2>{selectedStage?.name ?? "尚未设置"}</h2>
-        <p>
-          {selectedStage
-            ? "当前阶段已由目标设置同步。录入计划与完成记录后，这里会显示实际推进情况。"
-            : "先在设置中选择当前阶段，再逐步录入阶段计划与实际完成情况。"}
-        </p>
+        <span className="eyebrow">已选计划阶段</span>
+        <h2>{selectedPhase.name}</h2>
+        <div className="stage-date-line">
+          <CalendarDays size={15} />
+          {selectedPhase.date}
+        </div>
+        <p>{selectedPhase.goal}</p>
         <div className="stage-stat-grid">
           <div>
-            <span>计划任务量</span>
-            <strong>0</strong>
+            <span>建议周投入</span>
+            <strong>{selectedPhase.weeklyHours}</strong>
           </div>
           <div>
-            <span>实际完成量</span>
-            <strong>0</strong>
+            <span>核心方向</span>
+            <strong>{selectedPhase.focus.length} 项</strong>
           </div>
           <div>
-            <span>计划时长</span>
-            <strong>0h</strong>
+            <span>阶段验收</span>
+            <strong>{selectedPhase.deliverables.length} 项</strong>
           </div>
           <div>
-            <span>实际时长</span>
-            <strong>0h</strong>
+            <span>数据来源</span>
+            <strong>手工记录</strong>
           </div>
         </div>
+        <div className="stage-deliverables">
+          <strong>完成本阶段时应拿到</strong>
+          {selectedPhase.deliverables.map((item) => (
+            <span key={item}>
+              <Check size={13} />
+              {item}
+            </span>
+          ))}
+        </div>
         <div className="quality-note">
-          <CalendarRange size={17} />
+          <BrainCircuit size={17} />
           <div>
-            <strong>等待计划数据</strong>
-            <span>完成计划与学习记录后，这里会区分进度偏差和掌握质量。</span>
+            <strong>数学建模时间边界</strong>
+            <span>{selectedPhase.modelingLimit}</span>
           </div>
+        </div>
+        <div className="current-stage-setting">
+          设置中的当前阶段：{currentStage || "尚未手工标记"}
         </div>
       </aside>
     </section>
@@ -2293,38 +2370,112 @@ function StagePlan({ currentStage }: { currentStage: string }) {
 }
 
 function MonthPlan() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const mondayOffset = (new Date(year, month, 1).getDay() + 6) % 7;
-  const days = [
-    ...Array.from({ length: mondayOffset }, () => null),
-    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
-  ];
+  const [roadmapYear, setRoadmapYear] = useState<2026 | 2027>(2026);
+  const [selectedMonthId, setSelectedMonthId] = useState("2026-07");
+  const visibleMonths = monthlyRoadmap.filter((month) => month.year === roadmapYear);
+  const selectedMonth =
+    monthlyRoadmap.find((month) => month.id === selectedMonthId) ??
+    visibleMonths[0];
+
+  function selectYear(year: 2026 | 2027) {
+    setRoadmapYear(year);
+    setSelectedMonthId(
+      monthlyRoadmap.find((month) => month.year === year)?.id ?? monthlyRoadmap[0].id,
+    );
+  }
+
   return (
-    <article className="panel month-plan">
-      <PanelHeader eyebrow="月计划" title={`${formatYearMonth(today)} · 尚未添加月度事项`} />
-      <div className="month-week-labels">
-        {["一", "二", "三", "四", "五", "六", "日"].map((day) => (
-          <span key={day}>周{day}</span>
-        ))}
-      </div>
-      <div className="month-grid">
-        {days.map((day, index) => (
-          <div
-            className={day === today.getDate() ? "today" : day ? "" : "month-empty-cell"}
-            key={day ?? `empty-${index}`}
-          >
-            {day ? <span>{day}</span> : null}
+    <section className="month-roadmap-layout">
+      <article className="panel roadmap-panel">
+        <div className="roadmap-heading">
+          <PanelHeader
+            eyebrow="18 个月月度路线"
+            title="每月只保留一个主目标和一次验收"
+          />
+          <div className="segmented-control compact-control" aria-label="路线年份">
+            {([2026, 2027] as const).map((year) => (
+              <button
+                className={roadmapYear === year ? "active" : ""}
+                key={year}
+                onClick={() => selectYear(year)}
+                type="button"
+              >
+                {year}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="month-legend">
-        <span><i className="legend-dot planned" />今天</span>
-        <span>月度计划将根据手工录入逐步生成</span>
-      </div>
-    </article>
+        </div>
+        <div className="month-roadmap-list">
+          {visibleMonths.map((month) => (
+            <button
+              aria-pressed={selectedMonth.id === month.id}
+              className={`month-roadmap-row ${
+                selectedMonth.id === month.id ? "active" : ""
+              }`}
+              key={month.id}
+              onClick={() => setSelectedMonthId(month.id)}
+              type="button"
+            >
+              <div className="roadmap-month">
+                <strong>{month.label.replace(`${month.year} 年 `, "")}</strong>
+                <span>{month.range}</span>
+              </div>
+              <div className="roadmap-summary">
+                <span>{month.phase}</span>
+                <strong>{month.headline}</strong>
+              </div>
+              <div className="roadmap-hours">
+                <Clock3 size={14} />
+                {month.weeklyHours}
+              </div>
+              <ChevronRight size={17} />
+            </button>
+          ))}
+        </div>
+      </article>
+
+      <aside className="panel roadmap-detail">
+        <span className="eyebrow">月度执行单</span>
+        <h2>{selectedMonth.label}</h2>
+        <StatusTag label={selectedMonth.phase} tone="blue" />
+        <p>{selectedMonth.headline}</p>
+        <div className="roadmap-detail-meta">
+          <span>
+            <CalendarDays size={14} />
+            {selectedMonth.range}
+          </span>
+          <span>
+            <Clock3 size={14} />
+            每周 {selectedMonth.weeklyHours}
+          </span>
+        </div>
+        <div className="roadmap-focus-list">
+          <strong>本月重点</strong>
+          {selectedMonth.focus.map((item) => (
+            <span key={item}>
+              <Check size={13} />
+              {item}
+            </span>
+          ))}
+        </div>
+        <div className="roadmap-weeks">
+          <strong>按周推进</strong>
+          {selectedMonth.weeks.map((week, index) => (
+            <div key={week}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <p>{week}</p>
+            </div>
+          ))}
+        </div>
+        <div className="roadmap-deliverable">
+          <Flag size={16} />
+          <div>
+            <strong>月底验收</strong>
+            <span>{selectedMonth.deliverable}</span>
+          </div>
+        </div>
+      </aside>
+    </section>
   );
 }
 
@@ -5085,6 +5236,25 @@ function statusTone(status: string): SubjectSummary["tone"] {
   return "gray";
 }
 
+function getPhaseStatus(
+  start: string,
+  end: string,
+): { label: string; tone: SubjectSummary["tone"] } {
+  const now = new Date();
+  const startDate = new Date(`${start}T00:00:00+08:00`);
+  const endDate = new Date(`${end}T23:59:59+08:00`);
+  if (now > endDate) return { label: "计划期已结束", tone: "gray" };
+  if (now >= startDate) return { label: "当前计划期", tone: "blue" };
+  const days = Math.ceil((startDate.getTime() - now.getTime()) / 86_400_000);
+  if (days <= 14) {
+    return {
+      label: `${startDate.getMonth() + 1}月${startDate.getDate()}日启动`,
+      tone: "blue",
+    };
+  }
+  return { label: "待开始", tone: "gray" };
+}
+
 function priorityTone(priority: Priority) {
   if (priority === "高") return "red";
   if (priority === "中") return "yellow";
@@ -5211,12 +5381,14 @@ function formatMonthDay(date: Date) {
   return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function formatYearMonth(date: Date) {
-  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`;
-}
-
 function greeting() {
-  const hour = new Date().getHours();
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hourCycle: "h23",
+      timeZone: "Asia/Shanghai",
+    }).format(new Date()),
+  );
   if (hour < 6) return "夜深了";
   if (hour < 12) return "上午好";
   if (hour < 18) return "下午好";
@@ -5227,6 +5399,7 @@ function formatFullDate(date: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "long",
     day: "numeric",
+    timeZone: "Asia/Shanghai",
     weekday: "short",
   }).format(date);
 }
@@ -5235,6 +5408,7 @@ function formatShortDate(date: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
+    timeZone: "Asia/Shanghai",
     weekday: "short",
   }).format(date);
 }
