@@ -83,7 +83,12 @@ test("wires the complete product workflow and responsive design system", async (
   assert.match(dashboard, /exportReport/);
   assert.match(dashboard, /window\.localStorage/);
   assert.match(dashboard, /学习数据已导出/);
-  assert.match(data, /树与二叉树错题回炉/);
+  assert.match(dashboard, /yantu-dashboard-v5-manual/);
+  assert.match(dashboard, /新增章节 \/ 知识点/);
+  assert.match(data, /initialTasks: StudyTask\[\] = \[\]/);
+  assert.match(data, /mistakes: MistakeItem\[\] = \[\]/);
+  assert.match(data, /scoreTrend: ScoreRecord\[\] = \[\]/);
+  assert.match(data, /modelingTasks: ModelingTeamTask\[\] = \[\]/);
   assert.match(data, /总体掌握度|accuracy/);
   assert.match(data, /ScoreRecord/);
   assert.match(data, /WeekPlanDay/);
@@ -104,6 +109,7 @@ test("wires the complete product workflow and responsive design system", async (
   assert.doesNotMatch(dashboard, /SkeletonPreview|codex-preview/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview|_sites-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  assert.doesNotMatch(data, /错题回炉|全科模拟|层次分析法|TOPSIS/);
 
   await assert.rejects(access(previewRoot));
   await access(new URL("public/og.png", templateRoot));

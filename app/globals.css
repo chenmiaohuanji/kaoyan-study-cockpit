@@ -1292,6 +1292,31 @@ p {
   margin-top: auto;
 }
 
+.risk-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  align-content: center;
+  color: var(--muted);
+  gap: 5px;
+  text-align: center;
+}
+
+.risk-empty svg {
+  color: var(--brand);
+}
+
+.risk-empty strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.risk-empty span {
+  max-width: 230px;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
 .toolbar-row {
   display: flex;
   align-items: center;
@@ -1760,6 +1785,14 @@ p {
   font-weight: 650;
 }
 
+.stage-stat-grid.compact {
+  margin-top: 16px;
+}
+
+.stage-stat-grid.compact strong {
+  font-size: 13px;
+}
+
 .quality-note,
 .review-callout,
 .gentle-warning,
@@ -1829,6 +1862,10 @@ p {
   padding: 9px;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+
+.month-grid > div.month-empty-cell {
+  background: var(--panel-secondary);
 }
 
 .month-grid > div.today {
@@ -1975,6 +2012,11 @@ p {
   flex: 0 0 auto;
   margin-top: 2px;
   color: var(--brand);
+}
+
+.week-empty-copy {
+  color: var(--weak);
+  font-size: 9px;
 }
 
 .schedule-row {
@@ -2209,9 +2251,9 @@ p {
 .chapter-table-head,
 .chapter-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.7fr) repeat(5, minmax(72px, 0.7fr));
+  grid-template-columns: minmax(180px, 1.7fr) repeat(6, minmax(72px, 0.7fr));
   align-items: center;
-  min-width: 680px;
+  min-width: 760px;
   gap: 10px;
 }
 
@@ -2811,7 +2853,7 @@ p {
 .modeling-donut {
   width: 168px;
   margin: 12px auto;
-  background: conic-gradient(var(--warning) 0 17%, var(--panel-secondary) 17% 100%);
+  background: var(--panel-secondary);
 }
 
 .ratio-budget {
@@ -2858,6 +2900,43 @@ p {
   align-items: center;
   min-width: 760px;
   gap: 12px;
+}
+
+.team-empty {
+  min-width: 0;
+}
+
+.panel-empty-copy {
+  display: grid;
+  min-height: 180px;
+  padding: 18px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.score-note-content {
+  display: flex;
+  align-items: flex-start;
+  min-height: 180px;
+  padding: 18px;
+  border-radius: 9px;
+  background: var(--panel-secondary);
+  color: var(--muted);
+  gap: 10px;
+}
+
+.score-note-content svg {
+  flex: 0 0 auto;
+  color: var(--brand);
+}
+
+.score-note-content p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.8;
 }
 
 .team-table-head {
