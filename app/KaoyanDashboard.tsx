@@ -47,6 +47,7 @@ import {
   Trash2,
   TrendingUp,
   Trophy,
+  Upload,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -72,19 +73,24 @@ import {
 
 import {
   initialTasks,
-  mistakes,
-  modelingTasks,
-  scoreTrend,
+  initialGoalSettings,
+  mistakes as initialMistakes,
+  modelingTasks as initialModelingTasks,
+  scoreTrend as initialScoreRecords,
   stages,
-  subjectChapters,
+  subjectChapters as initialSubjectChapters,
   subjects,
-  weekPlan,
+  weekPlan as initialWeekPlan,
   weeklyTrend,
   type ChapterItem,
+  type GoalSettings,
   type MistakeItem,
+  type ModelingTeamTask,
   type Priority,
+  type ScoreRecord,
   type StudyTask,
   type SubjectSummary,
+  type WeekPlanDay,
 } from "./study-data";
 
 type ViewId =
@@ -101,9 +107,12 @@ type Theme = "light" | "dark";
 type PlanView = "stage" | "month" | "week" | "day";
 type ReportPeriod = "日报" | "周报" | "月报" | "阶段报告";
 type TaskFilter = "全部" | "待完成" | "进行中" | "已完成";
+type EntryDialog = "plan" | "study-log" | "mistake" | "score" | "modeling" | null;
 type TaskAction = { type: "complete" | "delay"; taskId: number } | null;
 type ConfirmAction =
   | { type: "delete-task"; taskId: number }
+  | { type: "delete-mistake"; mistakeId: number }
+  | { type: "delete-score"; scoreId: number }
   | { type: "reset-data" }
   | null;
 
@@ -169,9 +178,23 @@ export function KaoyanDashboard() {
   const [theme, setTheme] = useState<Theme>("light");
   const [reducedMotion, setReducedMotion] = useState(false);
   const [tasks, setTasks] = useState<StudyTask[]>(initialTasks);
+  const [mistakeItems, setMistakeItems] = useState<MistakeItem[]>(initialMistakes);
+  const [chapterData, setChapterData] = useState<Record<string, ChapterItem[]>>(
+    cloneChapterData(initialSubjectChapters),
+  );
+  const [scoreRecords, setScoreRecords] = useState<ScoreRecord[]>(initialScoreRecords);
+  const [weekPlanData, setWeekPlanData] = useState<WeekPlanDay[]>(
+    cloneWeekPlan(initialWeekPlan),
+  );
+  const [modelingTeamTasks, setModelingTeamTasks] = useState<ModelingTeamTask[]>(
+    initialModelingTasks,
+  );
+  const [goalSettings, setGoalSettings] = useState<GoalSettings>(initialGoalSettings);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState(initialTasks[0].id);
   const [taskAction, setTaskAction] = useState<TaskAction>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [entryDialog, setEntryDialog] = useState<EntryDialog>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [focusSeconds, setFocusSeconds] = useState(25 * 60);
@@ -198,10 +221,28 @@ export function KaoyanDashboard() {
         try {
           const parsed = JSON.parse(saved) as {
             tasks?: StudyTask[];
+            mistakes?: MistakeItem[];
+            chapters?: Record<string, ChapterItem[]>;
+            scores?: ScoreRecord[];
+            weekPlan?: WeekPlanDay[];
+            modelingTasks?: ModelingTeamTask[];
+            goal?: GoalSettings;
+            notificationsEnabled?: boolean;
             selectedTaskId?: number;
             reducedMotion?: boolean;
           };
-          if (parsed.tasks?.length) setTasks(parsed.tasks);
+          if (Array.isArray(parsed.tasks)) setTasks(parsed.tasks);
+          if (Array.isArray(parsed.mistakes)) setMistakeItems(parsed.mistakes);
+          if (parsed.chapters) setChapterData(parsed.chapters);
+          if (Array.isArray(parsed.scores)) setScoreRecords(parsed.scores);
+          if (Array.isArray(parsed.weekPlan)) setWeekPlanData(parsed.weekPlan);
+          if (Array.isArray(parsed.modelingTasks)) {
+            setModelingTeamTasks(parsed.modelingTasks);
+          }
+          if (parsed.goal) setGoalSettings(parsed.goal);
+          if (typeof parsed.notificationsEnabled === "boolean") {
+            setNotificationsEnabled(parsed.notificationsEnabled);
+          }
           if (parsed.selectedTaskId) setSelectedTaskId(parsed.selectedTaskId);
           if (typeof parsed.reducedMotion === "boolean") {
             setReducedMotion(parsed.reducedMotion);
@@ -220,9 +261,32 @@ export function KaoyanDashboard() {
     if (!hydrated) return;
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ tasks, selectedTaskId, reducedMotion }),
+      JSON.stringify({
+        tasks,
+        mistakes: mistakeItems,
+        chapters: chapterData,
+        scores: scoreRecords,
+        weekPlan: weekPlanData,
+        modelingTasks: modelingTeamTasks,
+        goal: goalSettings,
+        notificationsEnabled,
+        selectedTaskId,
+        reducedMotion,
+      }),
     );
-  }, [hydrated, reducedMotion, selectedTaskId, tasks]);
+  }, [
+    chapterData,
+    goalSettings,
+    hydrated,
+    mistakeItems,
+    modelingTeamTasks,
+    notificationsEnabled,
+    reducedMotion,
+    scoreRecords,
+    selectedTaskId,
+    tasks,
+    weekPlanData,
+  ]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -255,6 +319,7 @@ export function KaoyanDashboard() {
       if (event.key !== "Escape") return;
       setTaskAction(null);
       setConfirmAction(null);
+      setEntryDialog(null);
       setQuickAddOpen(false);
       setNotificationsOpen(false);
       setMobileMenuOpen(false);
@@ -278,9 +343,64 @@ export function KaoyanDashboard() {
     (sum, task) => sum + (task.actualMinutes || task.plannedMinutes),
     0,
   );
+  const latestScore = scoreRecords.at(-1) ?? initialScoreRecords.at(-1)!;
+  const previousScore =
+    scoreRecords.at(-2) ?? scoreRecords.at(-1) ?? initialScoreRecords.at(-1)!;
+  const liveSubjects = useMemo(
+    () =>
+      subjects.map((subject) => {
+        const chapters = chapterData[subject.id] ?? [];
+        if (!chapters.length) return subject;
+        const average = (field: "course" | "practice" | "accuracy") =>
+          Math.round(
+            chapters.reduce((sum, chapter) => sum + chapter[field], 0) /
+              chapters.length,
+          );
+        const course = average("course");
+        const practice = average("practice");
+        const accuracy = average("accuracy");
+        const progress = Math.round(course * 0.35 + practice * 0.35 + accuracy * 0.3);
+        const status: SubjectSummary["status"] =
+          progress < 40
+            ? "严重落后"
+            : progress < 55
+              ? "需要关注"
+              : "状态良好";
+        const tone: SubjectSummary["tone"] =
+          status === "严重落后" ? "red" : status === "需要关注" ? "yellow" : "green";
+        return {
+          ...subject,
+          progress,
+          course,
+          practice,
+          accuracy,
+          status,
+          tone,
+          latestScore: scoreLabelForSubject(subject.id, latestScore),
+          mistakes: mistakeItems.filter((item) => item.subject === subject.name).length,
+          reviews: mistakeItems.filter(
+            (item) => item.subject === subject.name && !item.reviewed,
+          ).length,
+        };
+      }),
+    [chapterData, latestScore, mistakeItems],
+  );
+  const liveWeeklyTrend = useMemo(
+    () =>
+      weeklyTrend.map((item, index) =>
+        index === weeklyTrend.length - 1
+          ? {
+              ...item,
+              hours: Number((completedMinutes / 60).toFixed(1)),
+              completion: completionRate,
+            }
+          : item,
+      ),
+    [completedMinutes, completionRate],
+  );
   const currentPage = navItems.find((item) => item.id === view) ?? navItems[0];
   const currentColors = chartColors[theme];
-  const countdown = daysUntilExam();
+  const countdown = daysUntilExam(goalSettings.examDate);
 
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -297,7 +417,7 @@ export function KaoyanDashboard() {
         view: "today" as ViewId,
         taskId: task.id,
       }));
-    const subjectResults = subjects
+    const subjectResults = liveSubjects
       .filter((subject) =>
         `${subject.name}${subject.stage}`.toLowerCase().includes(query),
       )
@@ -310,7 +430,7 @@ export function KaoyanDashboard() {
         subjectId: subject.id,
       }));
     return [...taskResults, ...subjectResults];
-  }, [searchQuery, tasks]);
+  }, [liveSubjects, searchQuery, tasks]);
 
   function navigate(nextView: ViewId) {
     setView(nextView);
@@ -332,6 +452,29 @@ export function KaoyanDashboard() {
     taskId: number,
     values: { actualMinutes: number; mastery: number; hasMistake: boolean },
   ) {
+    const completedTask = tasks.find((task) => task.id === taskId);
+    if (values.hasMistake && completedTask && !completedTask.hasMistake) {
+      setMistakeItems((current) => [
+        {
+          id: Math.max(0, ...current.map((item) => item.id)) + 1,
+          subject: completedTask.subject,
+          chapter: completedTask.chapter,
+          source: `今日任务 · ${completedTask.title}`,
+          difficulty: "中等",
+          question: `待整理：${completedTask.title} 中产生的错题`,
+          wrongAnswer: "待补充",
+          correctAnswer: "待补充",
+          reason: "完成任务时标记为产生错题",
+          method: "进入错题本补充题干、答案与方法",
+          knowledge: [completedTask.chapter],
+          reviewCount: 0,
+          nextReview: "明天",
+          reviewed: false,
+          corrected: false,
+        },
+        ...current,
+      ]);
+    }
     updateTask(taskId, {
       status: "已完成",
       actualMinutes: values.actualMinutes,
@@ -401,30 +544,265 @@ export function KaoyanDashboard() {
     setFocusMode(true);
   }
 
+  function addPlanItem(values: {
+    dayId: number;
+    title: string;
+    subject: string;
+    minutes: number;
+    addToToday: boolean;
+  }) {
+    setWeekPlanData((current) =>
+      current.map((day) =>
+        day.id === values.dayId
+          ? {
+              ...day,
+              planned: Number((day.planned + values.minutes / 60).toFixed(1)),
+              tasks: [...day.tasks, values.title],
+              state: day.actual ? "进行中" : "待开始",
+            }
+          : day,
+      ),
+    );
+    if (values.addToToday) {
+      const newTask: StudyTask = {
+        id: Math.max(0, ...tasks.map((item) => item.id)) + 1,
+        title: values.title,
+        subject: values.subject,
+        chapter: "来自周计划",
+        plannedMinutes: values.minutes,
+        actualMinutes: 0,
+        priority: "中",
+        status: "待开始",
+      };
+      setTasks((current) => [...current, newTask]);
+      setSelectedTaskId(newTask.id);
+    }
+    setEntryDialog(null);
+    setToast(values.addToToday ? "计划已创建，并同步到今日任务" : "计划已加入本周");
+  }
+
+  function addStudyRecord(values: {
+    subjectId: string;
+    chapterId: string;
+    minutes: number;
+    course: number;
+    practice: number;
+    accuracy: number;
+    mastery: number;
+  }) {
+    const chapter = chapterData[values.subjectId]?.find(
+      (item) => item.id === values.chapterId,
+    );
+    const subject = subjects.find((item) => item.id === values.subjectId);
+    if (!chapter || !subject) return;
+    setChapterData((current) => ({
+      ...current,
+      [values.subjectId]: current[values.subjectId].map((item) =>
+        item.id === values.chapterId
+          ? {
+              ...item,
+              course: values.course,
+              practice: values.practice,
+              accuracy: values.accuracy,
+              mastery: values.mastery,
+              lastReview: "今天",
+              status: chapterStatus(values.mastery, values.practice),
+            }
+          : item,
+      ),
+    }));
+    const logTask: StudyTask = {
+      id: Math.max(0, ...tasks.map((item) => item.id)) + 1,
+      title: `学习记录：${chapter.name}`,
+      subject: subject.name,
+      chapter: `${chapter.group} / ${chapter.name}`,
+      plannedMinutes: values.minutes,
+      actualMinutes: values.minutes,
+      priority: "中",
+      status: "已完成",
+      mastery: values.mastery,
+    };
+    setTasks((current) => [...current, logTask]);
+    setEntryDialog(null);
+    setToast("学习记录已保存，科目进度和今日时长已更新");
+  }
+
+  function addMistake(values: Omit<MistakeItem, "id" | "reviewCount" | "reviewed" | "corrected">) {
+    const newMistake: MistakeItem = {
+      ...values,
+      id: Math.max(0, ...mistakeItems.map((item) => item.id)) + 1,
+      reviewCount: 0,
+      reviewed: false,
+      corrected: false,
+    };
+    setMistakeItems((current) => [newMistake, ...current]);
+    setEntryDialog(null);
+    setToast("错题已录入，并安排首次复习");
+  }
+
+  function reviewMistake(mistakeId: number, rating: 1 | 2 | 3) {
+    setMistakeItems((current) =>
+      current.map((item) =>
+        item.id === mistakeId
+          ? {
+              ...item,
+              reviewCount: item.reviewCount + 1,
+              reviewed: rating === 3,
+              corrected: rating >= 2,
+              nextReview: nextReviewLabel(rating),
+            }
+          : item,
+      ),
+    );
+    setToast(
+      rating === 3
+        ? "已记录为掌握，下次复习安排在 7 天后"
+        : "已保留在复习队列，并缩短复习间隔",
+    );
+  }
+
+  function deleteMistake(mistakeId: number) {
+    setMistakeItems((current) => current.filter((item) => item.id !== mistakeId));
+    setConfirmAction(null);
+    setToast("错题已删除");
+  }
+
+  function addScore(values: Omit<ScoreRecord, "id" | "total">) {
+    const total =
+      values.math + values.english + values.professional + values.politics;
+    setScoreRecords((current) => [
+      ...current,
+      {
+        ...values,
+        id: Math.max(0, ...current.map((item) => item.id)) + 1,
+        total,
+      },
+    ]);
+    setEntryDialog(null);
+    setToast(`成绩已录入，总分 ${total} 分`);
+  }
+
+  function deleteScore(scoreId: number) {
+    setScoreRecords((current) => current.filter((item) => item.id !== scoreId));
+    setConfirmAction(null);
+    setToast("测试记录已删除");
+  }
+
+  function addModelingTask(values: Omit<ModelingTeamTask, "id" | "status">) {
+    setModelingTeamTasks((current) => [
+      ...current,
+      {
+        ...values,
+        id: Math.max(0, ...current.map((item) => item.id)) + 1,
+        status: "待开始",
+      },
+    ]);
+    setEntryDialog(null);
+    setToast("团队任务已添加");
+  }
+
+  function advanceModelingTask(taskId: number) {
+    const order: ModelingTeamTask["status"][] = [
+      "待开始",
+      "已排期",
+      "进行中",
+      "已完成",
+    ];
+    setModelingTeamTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId) return task;
+        const next = order[(order.indexOf(task.status) + 1) % order.length];
+        return { ...task, status: next };
+      }),
+    );
+    setToast("团队任务状态已推进");
+  }
+
+  function saveGoal(values: GoalSettings) {
+    setGoalSettings(values);
+    setToast("目标设置已保存，分数差距已重新计算");
+  }
+
+  async function importData(file: File) {
+    try {
+      const parsed = JSON.parse(await file.text()) as {
+        tasks?: StudyTask[];
+        mistakes?: MistakeItem[];
+        chapters?: Record<string, ChapterItem[]>;
+        scores?: ScoreRecord[];
+        weekPlan?: WeekPlanDay[];
+        modelingTasks?: ModelingTeamTask[];
+        goal?: GoalSettings;
+      };
+      if (!parsed.tasks || !parsed.goal) {
+        throw new Error("missing fields");
+      }
+      setTasks(parsed.tasks);
+      if (parsed.mistakes) setMistakeItems(parsed.mistakes);
+      if (parsed.chapters) setChapterData(parsed.chapters);
+      if (parsed.scores) setScoreRecords(parsed.scores);
+      if (parsed.weekPlan) setWeekPlanData(parsed.weekPlan);
+      if (parsed.modelingTasks) setModelingTeamTasks(parsed.modelingTasks);
+      setGoalSettings(parsed.goal);
+      setSelectedTaskId(parsed.tasks[0]?.id ?? initialTasks[0].id);
+      setToast("备份已导入，所有页面数据已同步");
+    } catch {
+      setToast("导入失败：请选择由研途驾驶舱导出的 JSON 文件");
+    }
+  }
+
+  function exportReport(period: ReportPeriod) {
+    const latest = scoreRecords.at(-1);
+    const content = [
+      `# 研途驾驶舱 ${period}`,
+      "",
+      `导出时间：${new Date().toLocaleString("zh-CN")}`,
+      `目标：${goalSettings.school} · ${goalSettings.targetScore} 分`,
+      "",
+      "## 核心指标",
+      `- 今日任务完成率：${completionRate}%`,
+      `- 今日有效学习：${formatMinutes(completedMinutes)}`,
+      `- 最近测试总分：${latest?.total ?? "暂无"}`,
+      `- 待复习错题：${mistakeItems.filter((item) => !item.reviewed).length} 道`,
+      "",
+      "## 下一步",
+      "- 优先修复专业课复习连续性",
+      "- 保持数学限时训练",
+      "- 控制数学建模时间占比",
+    ].join("\n");
+    downloadText(`研途驾驶舱-${period}.md`, content, "text/markdown");
+    setToast(`${period}已导出`);
+  }
+
   function exportData() {
     const payload = {
       product: "研途驾驶舱",
       exportedAt: new Date().toISOString(),
-      target: "2028 考研 · 网络安全方向 · 目标 380 分",
+      goal: goalSettings,
       tasks,
-      subjects,
-      mistakes,
-      scoreTrend,
+      mistakes: mistakeItems,
+      chapters: chapterData,
+      scores: scoreRecords,
+      weekPlan: weekPlanData,
+      modelingTasks: modelingTeamTasks,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "yantu-study-data.json";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadText(
+      "yantu-study-data.json",
+      JSON.stringify(payload, null, 2),
+      "application/json",
+    );
     setToast("学习数据已导出");
   }
 
   function resetData() {
     setTasks(initialTasks);
+    setMistakeItems(initialMistakes);
+    setChapterData(cloneChapterData(initialSubjectChapters));
+    setScoreRecords(initialScoreRecords);
+    setWeekPlanData(cloneWeekPlan(initialWeekPlan));
+    setModelingTeamTasks(initialModelingTasks);
+    setGoalSettings(initialGoalSettings);
+    setNotificationsEnabled(true);
     setSelectedTaskId(initialTasks[0].id);
     window.localStorage.removeItem(STORAGE_KEY);
     setConfirmAction(null);
@@ -440,8 +818,11 @@ export function KaoyanDashboard() {
         <Sidebar
           activeView={view}
           countdown={countdown}
+          direction={goalSettings.direction}
+          mistakeCount={mistakeItems.filter((item) => !item.reviewed).length}
           onNavigate={navigate}
           onToggleTheme={toggleTheme}
+          targetScore={goalSettings.targetScore}
           theme={theme}
         />
 
@@ -450,6 +831,7 @@ export function KaoyanDashboard() {
             currentPage={currentPage}
             description={pageDescriptions[view]}
             mobileMenuOpen={mobileMenuOpen}
+            notificationsEnabled={notificationsEnabled}
             notificationsOpen={notificationsOpen}
             onAdd={() => setQuickAddOpen(true)}
             onMobileMenu={() => setMobileMenuOpen((current) => !current)}
@@ -485,8 +867,13 @@ export function KaoyanDashboard() {
                 }}
                 onStartFocus={startFocus}
                 plannedMinutes={plannedMinutes}
+                scoreDelta={latestScore.total - previousScore.total}
+                subjectData={liveSubjects}
                 tasks={tasks}
+                targetScore={goalSettings.targetScore}
                 theme={theme}
+                trendData={liveWeeklyTrend}
+                predictedScore={latestScore.total}
               />
             ) : null}
 
@@ -508,44 +895,89 @@ export function KaoyanDashboard() {
             ) : null}
 
             {view === "plan" ? (
-              <PlanPage activeView={planView} onViewChange={setPlanView} />
+              <PlanPage
+                activeView={planView}
+                days={weekPlanData}
+                onAdd={() => setEntryDialog("plan")}
+                onViewChange={setPlanView}
+              />
             ) : null}
 
             {view === "subjects" ? (
               <SubjectsPage
                 activeSubjectId={activeSubjectId}
+                chapters={chapterData}
                 expandedGroup={expandedGroup}
+                onAddRecord={() => setEntryDialog("study-log")}
                 onSelectSubject={setActiveSubjectId}
                 onToggleGroup={(group) =>
                   setExpandedGroup((current) => (current === group ? "" : group))
                 }
+                subjectData={liveSubjects}
               />
             ) : null}
 
-            {view === "mistakes" ? <MistakesPage /> : null}
+            {view === "mistakes" ? (
+              <MistakesPage
+                items={mistakeItems}
+                onAdd={() => setEntryDialog("mistake")}
+                onDelete={(mistakeId) =>
+                  setConfirmAction({ type: "delete-mistake", mistakeId })
+                }
+                onReview={reviewMistake}
+              />
+            ) : null}
 
             {view === "scores" ? (
-              <ScoresPage chartColors={currentColors} theme={theme} />
+              <ScoresPage
+                chartColors={currentColors}
+                goal={goalSettings}
+                onAdd={() => setEntryDialog("score")}
+                onDelete={(scoreId) =>
+                  setConfirmAction({ type: "delete-score", scoreId })
+                }
+                records={scoreRecords}
+                theme={theme}
+              />
             ) : null}
 
             {view === "reports" ? (
               <ReportsPage
                 chartColors={currentColors}
+                completedMinutes={completedMinutes}
+                completionRate={completionRate}
+                mistakeCount={mistakeItems.filter((item) => !item.reviewed).length}
                 onPeriodChange={setReportPeriod}
+                onExport={() => exportReport(reportPeriod)}
                 period={reportPeriod}
+                scoreDelta={latestScore.total - previousScore.total}
                 theme={theme}
+                trendData={liveWeeklyTrend}
               />
             ) : null}
 
-            {view === "modeling" ? <ModelingPage /> : null}
+            {view === "modeling" ? (
+              <ModelingPage
+                onAdd={() => setEntryDialog("modeling")}
+                onAdvance={advanceModelingTask}
+                tasks={modelingTeamTasks}
+              />
+            ) : null}
 
             {view === "settings" ? (
               <SettingsPage
+                goal={goalSettings}
                 onExport={exportData}
+                onImport={importData}
                 onNavigate={navigate}
                 onReset={() => setConfirmAction({ type: "reset-data" })}
+                onSaveGoal={saveGoal}
                 onToggleMotion={() => setReducedMotion((current) => !current)}
                 onToggleTheme={toggleTheme}
+                onToggleNotifications={() =>
+                  setNotificationsEnabled((current) => !current)
+                }
+                notificationsEnabled={notificationsEnabled}
                 reducedMotion={reducedMotion}
                 theme={theme}
               />
@@ -592,23 +1024,76 @@ export function KaoyanDashboard() {
         />
       ) : null}
 
+      {entryDialog === "plan" ? (
+        <PlanEntryDialog
+          days={weekPlanData}
+          onClose={() => setEntryDialog(null)}
+          onSubmit={addPlanItem}
+        />
+      ) : null}
+
+      {entryDialog === "study-log" ? (
+        <StudyRecordDialog
+          activeSubjectId={activeSubjectId}
+          chapters={chapterData}
+          onClose={() => setEntryDialog(null)}
+          onSubmit={addStudyRecord}
+          subjectData={liveSubjects}
+        />
+      ) : null}
+
+      {entryDialog === "mistake" ? (
+        <MistakeEntryDialog
+          onClose={() => setEntryDialog(null)}
+          onSubmit={addMistake}
+        />
+      ) : null}
+
+      {entryDialog === "score" ? (
+        <ScoreEntryDialog
+          onClose={() => setEntryDialog(null)}
+          onSubmit={addScore}
+        />
+      ) : null}
+
+      {entryDialog === "modeling" ? (
+        <ModelingTaskDialog
+          onClose={() => setEntryDialog(null)}
+          onSubmit={addModelingTask}
+        />
+      ) : null}
+
       {confirmAction ? (
         <ConfirmDialog
           description={
             confirmAction.type === "delete-task"
               ? "删除后，该任务的今日记录也会一并移除。"
-              : "这会清除当前浏览器中的任务完成记录，并恢复示例数据。"
+              : confirmAction.type === "delete-mistake"
+                ? "删除后，该题的复习次数与间隔安排也会一并移除。"
+                : confirmAction.type === "delete-score"
+                  ? "删除后，成绩趋势、预测分与报告指标会立即重新计算。"
+                  : "这会清除当前浏览器中的学习记录，并恢复示例数据。"
           }
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => {
             if (confirmAction.type === "delete-task") {
               deleteTask(confirmAction.taskId);
+            } else if (confirmAction.type === "delete-mistake") {
+              deleteMistake(confirmAction.mistakeId);
+            } else if (confirmAction.type === "delete-score") {
+              deleteScore(confirmAction.scoreId);
             } else {
               resetData();
             }
           }}
           title={
-            confirmAction.type === "delete-task" ? "确认删除任务？" : "确认重置数据？"
+            confirmAction.type === "delete-task"
+              ? "确认删除任务？"
+              : confirmAction.type === "delete-mistake"
+                ? "确认删除错题？"
+                : confirmAction.type === "delete-score"
+                  ? "确认删除成绩？"
+                  : "确认重置数据？"
           }
         />
       ) : null}
@@ -626,14 +1111,20 @@ export function KaoyanDashboard() {
 function Sidebar({
   activeView,
   countdown,
+  direction,
+  mistakeCount,
   onNavigate,
   onToggleTheme,
+  targetScore,
   theme,
 }: {
   activeView: ViewId;
   countdown: number;
+  direction: string;
+  mistakeCount: number;
   onNavigate: (view: ViewId) => void;
   onToggleTheme: () => void;
+  targetScore: number;
   theme: Theme;
 }) {
   return (
@@ -659,7 +1150,7 @@ function Sidebar({
             >
               <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
               <span>{item.label}</span>
-              {item.id === "mistakes" ? <small>8</small> : null}
+              {item.id === "mistakes" && mistakeCount ? <small>{mistakeCount}</small> : null}
             </button>
           );
         })}
@@ -670,7 +1161,7 @@ function Sidebar({
           <div className="avatar">王</div>
           <div>
             <strong>王进宇</strong>
-            <span>网络安全 · 目标 380</span>
+            <span>{direction} · 目标 {targetScore}</span>
           </div>
         </div>
         <div className="countdown-line">
@@ -700,6 +1191,7 @@ function Topbar({
   currentPage,
   description,
   mobileMenuOpen,
+  notificationsEnabled,
   notificationsOpen,
   onAdd,
   onMobileMenu,
@@ -712,6 +1204,7 @@ function Topbar({
   currentPage: (typeof navItems)[number];
   description: string;
   mobileMenuOpen: boolean;
+  notificationsEnabled: boolean;
   notificationsOpen: boolean;
   onAdd: () => void;
   onMobileMenu: () => void;
@@ -783,34 +1276,42 @@ function Topbar({
             type="button"
           >
             <Bell size={18} />
-            <span className="notification-dot" />
+            {notificationsEnabled ? <span className="notification-dot" /> : null}
           </button>
           {notificationsOpen ? (
             <div className="notification-panel">
               <div className="popover-heading">
                 <strong>学习提醒</strong>
-                <span>4 条</span>
+                <span>{notificationsEnabled ? "4 条" : "已关闭"}</span>
               </div>
-              <NotificationItem
-                meta="需要今天处理"
-                text="数据结构连续 6 天未复习"
-                tone="red"
-              />
-              <NotificationItem
-                meta="近两次测试"
-                text="英语阅读正确率下降 6%"
-                tone="yellow"
-              />
-              <NotificationItem
-                meta="时间分配"
-                text="数学建模超过本周预算 20%"
-                tone="yellow"
-              />
-              <NotificationItem
-                meta="间隔复习"
-                text="8 道错题已到复习日期"
-                tone="blue"
-              />
+              {notificationsEnabled ? (
+                <>
+                  <NotificationItem
+                    meta="需要今天处理"
+                    text="数据结构连续 6 天未复习"
+                    tone="red"
+                  />
+                  <NotificationItem
+                    meta="近两次测试"
+                    text="英语阅读正确率下降 6%"
+                    tone="yellow"
+                  />
+                  <NotificationItem
+                    meta="时间分配"
+                    text="数学建模超过本周预算 20%"
+                    tone="yellow"
+                  />
+                  <NotificationItem
+                    meta="间隔复习"
+                    text="错题已到复习日期"
+                    tone="blue"
+                  />
+                </>
+              ) : (
+                <div className="notification-empty">
+                  学习提醒已关闭，可在“设置”中重新开启。
+                </div>
+              )}
             </div>
           ) : null}
         </div>
@@ -887,8 +1388,13 @@ function OverviewPage({
   onSelectTask,
   onStartFocus,
   plannedMinutes,
+  predictedScore,
+  scoreDelta,
+  subjectData,
   tasks,
+  targetScore,
   theme,
+  trendData,
 }: {
   chartColors: (typeof chartColors)[Theme];
   completedMinutes: number;
@@ -898,8 +1404,13 @@ function OverviewPage({
   onSelectTask: (taskId: number) => void;
   onStartFocus: (taskId: number) => void;
   plannedMinutes: number;
+  predictedScore: number;
+  scoreDelta: number;
+  subjectData: SubjectSummary[];
   tasks: StudyTask[];
+  targetScore: number;
   theme: Theme;
+  trendData: typeof weeklyTrend;
 }) {
   const activeTasks = tasks.filter((task) => task.status !== "已完成");
   const topTasks = activeTasks.slice(0, 4);
@@ -960,13 +1471,13 @@ function OverviewPage({
           value="74"
         />
         <MetricCard
-          delta="+5"
+          delta={`${scoreDelta >= 0 ? "+" : ""}${scoreDelta}`}
           icon={TrendingUp}
           label="当前预测分"
-          note="距离目标还差 57 分"
-          progress={85}
+          note={`距离目标还差 ${Math.max(0, targetScore - predictedScore)} 分`}
+          progress={Math.round((predictedScore / Math.max(1, targetScore)) * 100)}
           tone="green"
-          value="323"
+          value={`${predictedScore}`}
         />
         <MetricCard
           delta="+4 天"
@@ -1056,7 +1567,7 @@ function OverviewPage({
             title="找到最落后的那一科"
           />
           <div className="subject-progress-list">
-            {subjects.map((subject) => (
+            {subjectData.map((subject) => (
               <div className="subject-progress-row" key={subject.id}>
                 <div className="subject-row-head">
                   <div>
@@ -1082,7 +1593,7 @@ function OverviewPage({
           <PanelHeader eyebrow="学习趋势" title="最近 7 天有效学习时长" />
           <div className="chart-frame" aria-label="最近七天学习时长折线图">
             <ResponsiveContainer height="100%" width="100%">
-              <LineChart data={weeklyTrend} margin={{ left: -18, right: 8, top: 14 }}>
+              <LineChart data={trendData} margin={{ left: -18, right: 8, top: 14 }}>
                 <CartesianGrid stroke={colors.grid} strokeDasharray="3 4" vertical={false} />
                 <XAxis
                   axisLine={false}
@@ -1421,9 +1932,13 @@ function TodayPage({
 
 function PlanPage({
   activeView,
+  days,
+  onAdd,
   onViewChange,
 }: {
   activeView: PlanView;
+  days: WeekPlanDay[];
+  onAdd: () => void;
   onViewChange: (view: PlanView) => void;
 }) {
   return (
@@ -1442,11 +1957,15 @@ function PlanPage({
           ))}
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-button" type="button">
+          <button
+            className="secondary-button"
+            onClick={() => onViewChange("month")}
+            type="button"
+          >
             <CalendarDays size={16} />
             2026 年 7 月
           </button>
-          <button className="primary-button" type="button">
+          <button className="primary-button" onClick={onAdd} type="button">
             <Plus size={16} />
             新建计划
           </button>
@@ -1455,8 +1974,8 @@ function PlanPage({
 
       {activeView === "stage" ? <StagePlan /> : null}
       {activeView === "month" ? <MonthPlan /> : null}
-      {activeView === "week" ? <WeekPlan /> : null}
-      {activeView === "day" ? <DayPlan /> : null}
+      {activeView === "week" ? <WeekPlan days={days} onAdd={onAdd} /> : null}
+      {activeView === "day" ? <DayPlan day={days[3] ?? days[0]} onAdd={onAdd} /> : null}
     </div>
   );
 }
@@ -1554,16 +2073,17 @@ function MonthPlan() {
   );
 }
 
-function WeekPlan() {
+function WeekPlan({ days, onAdd }: { days: WeekPlanDay[]; onAdd: () => void }) {
   return (
     <article className="panel week-plan">
       <PanelHeader
-        action="回到本周"
+        action="添加本周任务"
         eyebrow="周计划"
-        title="7月20日 - 7月26日 · 计划 40.5 小时"
+        onAction={onAdd}
+        title={`7月20日 - 7月26日 · 计划 ${days.reduce((sum, day) => sum + day.planned, 0).toFixed(1)} 小时`}
       />
       <div className="week-calendar">
-        {weekPlan.map((day, index) => (
+        {days.map((day, index) => (
           <div className={`week-day ${index === 3 ? "today" : ""}`} key={day.day}>
             <div className="week-day-head">
               <div>
@@ -1595,34 +2115,40 @@ function WeekPlan() {
   );
 }
 
-function DayPlan() {
+function DayPlan({ day, onAdd }: { day: WeekPlanDay; onAdd: () => void }) {
+  const times = ["08:00", "10:10", "14:30", "17:00", "20:00", "21:30"];
   return (
     <section className="day-plan-layout">
       <article className="panel day-schedule">
-        <PanelHeader eyebrow="日计划" title="今天 · 7月23日" />
-        {[
-          ["08:00", "树与二叉树错题回炉", "专业课", "高"],
-          ["10:10", "定积分换元法训练", "数学", "高"],
-          ["14:30", "英语一阅读 Text 2", "英语", "高"],
-          ["17:00", "马原框架速记", "政治", "低"],
-          ["20:00", "日复盘与错题整理", "复盘", "中"],
-        ].map(([time, task, subject, priority]) => (
-          <div className="schedule-row" key={time}>
-            <span>{time}</span>
+        <PanelHeader
+          action="添加任务"
+          eyebrow="日计划"
+          onAction={onAdd}
+          title={`今天 · ${day?.date ?? "07/23"}`}
+        />
+        {(day?.tasks ?? []).map((task, index) => (
+          <div className="schedule-row" key={`${task}-${index}`}>
+            <span>{times[index] ?? `${21 + index}:00`}</span>
             <i />
             <div>
               <strong>{task}</strong>
-              <small>{subject} · {priority}优先级</small>
+              <small>本周计划 · 待执行</small>
             </div>
-            <button className="icon-button" type="button">
-              <MoreHorizontal size={17} />
+            <button
+              aria-label="继续添加计划任务"
+              className="icon-button"
+              onClick={onAdd}
+              title="添加任务"
+              type="button"
+            >
+              <Plus size={17} />
             </button>
           </div>
         ))}
       </article>
       <aside className="panel day-balance">
         <span className="eyebrow">时间预算</span>
-        <h2>6 小时 10 分</h2>
+        <h2>{formatHours(day?.planned ?? 0)}</h2>
         <p>高认知任务占 68%，建议午后保留一次 20 分钟休息。</p>
         <ProgressLine label="数学" tone="blue" value={33} />
         <ProgressLine label="专业课" tone="red" value={25} />
@@ -1636,19 +2162,25 @@ function DayPlan() {
 
 function SubjectsPage({
   activeSubjectId,
+  chapters,
   expandedGroup,
+  onAddRecord,
   onSelectSubject,
   onToggleGroup,
+  subjectData,
 }: {
   activeSubjectId: string;
+  chapters: Record<string, ChapterItem[]>;
   expandedGroup: string;
+  onAddRecord: () => void;
   onSelectSubject: (subjectId: string) => void;
   onToggleGroup: (group: string) => void;
+  subjectData: SubjectSummary[];
 }) {
   const activeSubject =
-    subjects.find((subject) => subject.id === activeSubjectId) ?? subjects[0];
-  const chapters = subjectChapters[activeSubject.id] ?? [];
-  const grouped = chapters.reduce<Record<string, ChapterItem[]>>((result, chapter) => {
+    subjectData.find((subject) => subject.id === activeSubjectId) ?? subjectData[0];
+  const subjectChapterList = chapters[activeSubject.id] ?? [];
+  const grouped = subjectChapterList.reduce<Record<string, ChapterItem[]>>((result, chapter) => {
     result[chapter.group] = [...(result[chapter.group] ?? []), chapter];
     return result;
   }, {});
@@ -1656,7 +2188,7 @@ function SubjectsPage({
   return (
     <div className="page-stack page-enter">
       <section className="subject-overview-grid">
-        {subjects.map((subject) => (
+        {subjectData.map((subject) => (
           <button
             className={`subject-overview-card ${activeSubjectId === subject.id ? "active" : ""}`}
             key={subject.id}
@@ -1681,7 +2213,7 @@ function SubjectsPage({
             <h2>{activeSubject.name}</h2>
             <p>{activeSubject.stage}</p>
           </div>
-          <button className="primary-button" type="button">
+          <button className="primary-button" onClick={onAddRecord} type="button">
             <Plus size={16} />
             添加学习记录
           </button>
@@ -1780,42 +2312,69 @@ function SubjectsPage({
   );
 }
 
-function MistakesPage() {
+function MistakesPage({
+  items,
+  onAdd,
+  onDelete,
+  onReview,
+}: {
+  items: MistakeItem[];
+  onAdd: () => void;
+  onDelete: (mistakeId: number) => void;
+  onReview: (mistakeId: number, rating: 1 | 2 | 3) => void;
+}) {
   const [subjectFilter, setSubjectFilter] = useState("全部科目");
   const [reviewFilter, setReviewFilter] = useState("全部状态");
   const [difficultyFilter, setDifficultyFilter] = useState("全部难度");
+  const [sortAscending, setSortAscending] = useState(true);
   const [reviewMode, setReviewMode] = useState(false);
   const [answerVisible, setAnswerVisible] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
 
   const filtered = useMemo(
     () =>
-      mistakes.filter((item) => {
+      items.filter((item) => {
         if (subjectFilter !== "全部科目" && item.subject !== subjectFilter) return false;
         if (difficultyFilter !== "全部难度" && item.difficulty !== difficultyFilter) return false;
         if (reviewFilter === "待复习" && item.reviewed) return false;
         if (reviewFilter === "已复习" && !item.reviewed) return false;
         if (reviewFilter === "再次做错" && item.corrected) return false;
         return true;
-      }),
-    [difficultyFilter, reviewFilter, subjectFilter],
+      }).sort((a, b) =>
+        sortAscending
+          ? a.reviewCount - b.reviewCount
+          : b.reviewCount - a.reviewCount,
+      ),
+    [difficultyFilter, items, reviewFilter, sortAscending, subjectFilter],
   );
-  const current = filtered[reviewIndex % Math.max(filtered.length, 1)] ?? mistakes[0];
+  const current =
+    filtered[reviewIndex % Math.max(filtered.length, 1)] ??
+    items[0] ??
+    initialMistakes[0];
+
+  function rateCurrent(rating: 1 | 2 | 3) {
+    onReview(current.id, rating);
+    setReviewIndex((index) => (index + 1) % Math.max(filtered.length, 1));
+    setAnswerVisible(false);
+  }
 
   return (
     <div className="page-stack page-enter">
       <section className="toolbar-row">
         <div>
           <span className="eyebrow">间隔复习</span>
-          <h2 className="toolbar-title">今天有 8 道错题到期</h2>
+          <h2 className="toolbar-title">
+            今天有 {items.filter((item) => !item.reviewed).length} 道错题到期
+          </h2>
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-button" type="button">
+          <button className="secondary-button" onClick={onAdd} type="button">
             <Plus size={16} />
             录入错题
           </button>
           <button
             className="primary-button"
+            disabled={!filtered.length}
             onClick={() => {
               setReviewIndex(0);
               setAnswerVisible(false);
@@ -1874,13 +2433,19 @@ function MistakesPage() {
         <section className="mistake-results">
           <div className="result-header">
             <span>共 {filtered.length} 道错题</span>
-            <button className="text-button" type="button">
-              按复习日期排序
+            <button
+              className="text-button"
+              onClick={() => setSortAscending((current) => !current)}
+              type="button"
+            >
+              {sortAscending ? "复习次数少的优先" : "复习次数多的优先"}
               <ChevronDown size={15} />
             </button>
           </div>
           {filtered.length ? (
-            filtered.map((item) => <MistakeCard item={item} key={item.id} />)
+            filtered.map((item) => (
+              <MistakeCard item={item} key={item.id} onDelete={onDelete} />
+            ))
           ) : (
             <div className="panel">
               <EmptyState
@@ -1943,9 +2508,9 @@ function MistakesPage() {
             ) : null}
           </div>
           <div className="review-rating">
-            <button type="button">完全不会</button>
-            <button type="button">有些模糊</button>
-            <button type="button">已经掌握</button>
+            <button onClick={() => rateCurrent(1)} type="button">完全不会</button>
+            <button onClick={() => rateCurrent(2)} type="button">有些模糊</button>
+            <button onClick={() => rateCurrent(3)} type="button">已经掌握</button>
             <button
               className="primary-button"
               onClick={() => {
@@ -1964,7 +2529,13 @@ function MistakesPage() {
   );
 }
 
-function MistakeCard({ item }: { item: MistakeItem }) {
+function MistakeCard({
+  item,
+  onDelete,
+}: {
+  item: MistakeItem;
+  onDelete: (mistakeId: number) => void;
+}) {
   return (
     <article className="panel mistake-card">
       <div className="mistake-card-head">
@@ -1973,8 +2544,14 @@ function MistakeCard({ item }: { item: MistakeItem }) {
           <StatusTag label={item.difficulty} />
           {!item.reviewed ? <StatusTag label="待复习" tone="yellow" /> : null}
         </div>
-        <button aria-label="更多操作" className="icon-button" type="button">
-          <MoreHorizontal size={18} />
+        <button
+          aria-label={`删除错题：${item.question}`}
+          className="icon-button danger-icon"
+          onClick={() => onDelete(item.id)}
+          title="删除错题"
+          type="button"
+        >
+          <Trash2 size={16} />
         </button>
       </div>
       <span className="mistake-source">{item.source} · {item.chapter}</span>
@@ -2005,20 +2582,49 @@ function MistakeCard({ item }: { item: MistakeItem }) {
 
 function ScoresPage({
   chartColors: colors,
+  goal,
+  onAdd,
+  onDelete,
+  records,
   theme,
 }: {
   chartColors: (typeof chartColors)[Theme];
+  goal: GoalSettings;
+  onAdd: () => void;
+  onDelete: (scoreId: number) => void;
+  records: ScoreRecord[];
   theme: Theme;
 }) {
+  const latest = records.at(-1) ?? initialScoreRecords.at(-1)!;
+  const previous = records.at(-2) ?? latest;
+  const change = latest.total - previous.total;
+  const scoreRatios = [
+    { label: "数学", value: latest.math / goal.math },
+    { label: "英语", value: latest.english / goal.english },
+    { label: "专业课", value: latest.professional / goal.professional },
+    { label: "政治", value: latest.politics / goal.politics },
+  ].sort((a, b) => b.value - a.value);
+
   return (
     <div className="page-stack page-enter">
+      <section className="toolbar-row">
+        <div>
+          <span className="eyebrow">成绩档案</span>
+          <h2 className="toolbar-title">已记录 {records.length} 次测试</h2>
+        </div>
+        <button className="primary-button" onClick={onAdd} type="button">
+          <Plus size={16} />
+          录入测试成绩
+        </button>
+      </section>
+
       <section className="score-metrics metric-grid">
-        <MetricCard delta="+5" icon={Trophy} label="最近一次总分" note="7月11日全科模拟" tone="green" value="323" />
-        <MetricCard delta="目标" icon={Target} label="目标分" note="网络安全方向" tone="blue" value="380" />
-        <MetricCard delta="-7" icon={Flag} label="当前差距" note="近三次缩小 12 分" tone="yellow" value="57" />
-        <MetricCard delta="+11" icon={TrendingUp} label="近三次变化" note="保持温和上升" tone="green" value="+11" />
-        <MetricCard delta="71%" icon={BookOpenCheck} label="最稳定科目" note="波动仅 3 分" tone="green" value="英语" />
-        <MetricCard delta="38%" icon={AlertTriangle} label="最薄弱科目" note="数据结构拖后腿" tone="red" value="专业课" />
+        <MetricCard delta={`${change >= 0 ? "+" : ""}${change}`} icon={Trophy} label="最近一次总分" note={`${latest.date} · ${latest.title}`} tone="green" value={`${latest.total}`} />
+        <MetricCard delta="目标" icon={Target} label="目标分" note={goal.direction} tone="blue" value={`${goal.targetScore}`} />
+        <MetricCard delta={`${latest.total - goal.targetScore}`} icon={Flag} label="当前差距" note="录入新成绩后自动重算" tone="yellow" value={`${Math.max(0, goal.targetScore - latest.total)}`} />
+        <MetricCard delta={`${change >= 0 ? "+" : ""}${change}`} icon={TrendingUp} label="最近一次变化" note={change >= 0 ? "继续保持当前节奏" : "需要复盘失分原因"} tone={change >= 0 ? "green" : "red"} value={`${change >= 0 ? "+" : ""}${change}`} />
+        <MetricCard delta={`${Math.round(scoreRatios[0].value * 100)}%`} icon={BookOpenCheck} label="最接近目标" note="按目标达成率判断" tone="green" value={scoreRatios[0].label} />
+        <MetricCard delta={`${Math.round(scoreRatios.at(-1)!.value * 100)}%`} icon={AlertTriangle} label="最需提升" note="优先拆解失分知识点" tone="red" value={scoreRatios.at(-1)!.label} />
       </section>
 
       <section className="score-layout dashboard-grid">
@@ -2026,7 +2632,7 @@ function ScoresPage({
           <PanelHeader eyebrow="核心图表" title="总分与各科成绩趋势" />
           <div className="chart-frame large-chart" aria-label="近五次模拟考试成绩趋势">
             <ResponsiveContainer height="100%" width="100%">
-              <LineChart data={scoreTrend} margin={{ left: -14, right: 10, top: 18 }}>
+              <LineChart data={records} margin={{ left: -14, right: 10, top: 18 }}>
                 <CartesianGrid stroke={colors.grid} strokeDasharray="3 4" vertical={false} />
                 <XAxis
                   axisLine={false}
@@ -2063,10 +2669,10 @@ function ScoresPage({
 
         <aside className="panel span-4 score-gap">
           <PanelHeader eyebrow="目标差距" title="57 分如何拆解" />
-          <ScoreGapRow label="数学" target={120} value={92} />
-          <ScoreGapRow label="英语" target={75} value={71} />
-          <ScoreGapRow label="专业课" target={115} value={102} />
-          <ScoreGapRow label="政治" target={70} value={58} />
+          <ScoreGapRow label="数学" target={goal.math} value={latest.math} />
+          <ScoreGapRow label="英语" target={goal.english} value={latest.english} />
+          <ScoreGapRow label="专业课" target={goal.professional} value={latest.professional} />
+          <ScoreGapRow label="政治" target={goal.politics} value={latest.politics} />
           <div className="score-gap-note">
             专业课与数学承担 72% 的提分任务，优先修复高频失分知识点。
           </div>
@@ -2101,20 +2707,72 @@ function ScoresPage({
           </div>
         </article>
       </section>
+
+      <article className="panel score-history">
+        <PanelHeader
+          action="继续录入"
+          eyebrow="测试记录"
+          onAction={onAdd}
+          title="每次分数都保留可追溯的复盘"
+        />
+        <div className="score-history-head">
+          <span>测试</span>
+          <span>总分</span>
+          <span>数学</span>
+          <span>英语</span>
+          <span>专业课</span>
+          <span>政治</span>
+          <span />
+        </div>
+        {[...records].reverse().map((record) => (
+          <div className="score-history-row" key={record.id}>
+            <div>
+              <strong>{record.title}</strong>
+              <span>{record.date} · {record.note || "暂无复盘备注"}</span>
+            </div>
+            <strong>{record.total}</strong>
+            <span>{record.math}</span>
+            <span>{record.english}</span>
+            <span>{record.professional}</span>
+            <span>{record.politics}</span>
+            <button
+              aria-label={`删除成绩：${record.title}`}
+              className="icon-button danger-icon"
+              onClick={() => onDelete(record.id)}
+              title="删除成绩"
+              type="button"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        ))}
+      </article>
     </div>
   );
 }
 
 function ReportsPage({
   chartColors: colors,
+  completedMinutes,
+  completionRate,
+  mistakeCount,
+  onExport,
   onPeriodChange,
   period,
+  scoreDelta,
   theme,
+  trendData,
 }: {
   chartColors: (typeof chartColors)[Theme];
+  completedMinutes: number;
+  completionRate: number;
+  mistakeCount: number;
+  onExport: () => void;
   onPeriodChange: (period: ReportPeriod) => void;
   period: ReportPeriod;
+  scoreDelta: number;
   theme: Theme;
+  trendData: typeof weeklyTrend;
 }) {
   return (
     <div className="page-stack page-enter">
@@ -2131,7 +2789,7 @@ function ReportsPage({
             </button>
           ))}
         </div>
-        <button className="secondary-button" type="button">
+        <button className="secondary-button" onClick={onExport} type="button">
           <Download size={16} />
           导出 {period}
         </button>
@@ -2149,10 +2807,10 @@ function ReportsPage({
       </section>
 
       <section className="report-metrics metric-grid four">
-        <MetricCard delta="+9%" icon={Clock3} label="有效学习" note="日均 5.1 小时" tone="green" value="35.7h" />
-        <MetricCard delta="+6%" icon={ListChecks} label="任务完成率" note="32 / 38 项" tone="green" value="84%" />
-        <MetricCard delta="+5" icon={TrendingUp} label="预测分变化" note="从 318 升至 323" tone="blue" value="+5" />
-        <MetricCard delta="8 道" icon={NotebookTabs} label="错题到期" note="其中 2 道已逾期" tone="yellow" value="8" />
+        <MetricCard delta="今日" icon={Clock3} label="有效学习" note="来自任务完成记录" tone="green" value={formatMinutes(completedMinutes)} />
+        <MetricCard delta={`${completionRate}%`} icon={ListChecks} label="任务完成率" note="随今日打卡实时更新" tone="green" value={`${completionRate}%`} />
+        <MetricCard delta={`${scoreDelta >= 0 ? "+" : ""}${scoreDelta}`} icon={TrendingUp} label="预测分变化" note="来自最近两次测试" tone="blue" value={`${scoreDelta >= 0 ? "+" : ""}${scoreDelta}`} />
+        <MetricCard delta={`${mistakeCount} 道`} icon={NotebookTabs} label="错题到期" note="完成复习后自动减少" tone="yellow" value={`${mistakeCount}`} />
       </section>
 
       <section className="report-layout dashboard-grid">
@@ -2160,7 +2818,7 @@ function ReportsPage({
           <PanelHeader eyebrow="学习时长分布" title="每天投入与计划对比" />
           <div className="chart-frame" aria-label="本周每日学习时长柱状图">
             <ResponsiveContainer height="100%" width="100%">
-              <BarChart data={weeklyTrend} margin={{ left: -18, right: 8, top: 14 }}>
+              <BarChart data={trendData} margin={{ left: -18, right: 8, top: 14 }}>
                 <CartesianGrid stroke={colors.grid} strokeDasharray="3 4" vertical={false} />
                 <XAxis
                   axisLine={false}
@@ -2239,7 +2897,15 @@ function ReportsPage({
   );
 }
 
-function ModelingPage() {
+function ModelingPage({
+  onAdd,
+  onAdvance,
+  tasks,
+}: {
+  onAdd: () => void;
+  onAdvance: (taskId: number) => void;
+  tasks: ModelingTeamTask[];
+}) {
   return (
     <div className="page-stack page-enter">
       <section className="modeling-banner">
@@ -2261,7 +2927,7 @@ function ModelingPage() {
         <MetricCard delta="+9%" icon={ListChecks} label="编程训练进度" note="Python 数据处理" tone="blue" value="74%" />
         <MetricCard delta="+3%" icon={FileText} label="论文写作进度" note="摘要仍需巩固" tone="yellow" value="51%" />
         <MetricCard delta="+2" icon={RotateCcw} label="历年赛题训练" note="本月完成 2 次" tone="green" value="7 次" />
-        <MetricCard delta="3 项" icon={Target} label="团队任务" note="1 项正在进行" tone="blue" value="4" />
+        <MetricCard delta={`${tasks.filter((task) => task.status === "已完成").length} 项完成`} icon={Target} label="团队任务" note={`${tasks.filter((task) => task.status === "进行中").length} 项正在进行`} tone="blue" value={`${tasks.length}`} />
       </section>
 
       <section className="modeling-layout dashboard-grid">
@@ -2307,6 +2973,7 @@ function ModelingPage() {
         <PanelHeader
           action="添加团队任务"
           eyebrow="协作任务"
+          onAction={onAdd}
           title="本周团队推进"
         />
         <div className="team-task-table">
@@ -2317,13 +2984,19 @@ function ModelingPage() {
             <span>状态</span>
             <span />
           </div>
-          {modelingTasks.map((task) => (
-            <div className="team-task-row" key={task.title}>
+          {tasks.map((task) => (
+            <div className="team-task-row" key={task.id}>
               <strong>{task.title}</strong>
               <span>{task.owner}</span>
               <span>{task.due}</span>
               <StatusTag label={task.status} />
-              <button aria-label="团队任务更多操作" className="icon-button" type="button">
+              <button
+                aria-label={`推进团队任务状态：${task.title}`}
+                className="icon-button"
+                onClick={() => onAdvance(task.id)}
+                title="推进状态"
+                type="button"
+              >
                 <MoreHorizontal size={17} />
               </button>
             </div>
@@ -2335,22 +3008,38 @@ function ModelingPage() {
 }
 
 function SettingsPage({
+  goal,
   onExport,
+  onImport,
   onNavigate,
   onReset,
+  onSaveGoal,
   onToggleMotion,
+  onToggleNotifications,
   onToggleTheme,
+  notificationsEnabled,
   reducedMotion,
   theme,
 }: {
+  goal: GoalSettings;
   onExport: () => void;
+  onImport: (file: File) => void;
   onNavigate: (view: ViewId) => void;
   onReset: () => void;
+  onSaveGoal: (goal: GoalSettings) => void;
   onToggleMotion: () => void;
+  onToggleNotifications: () => void;
   onToggleTheme: () => void;
+  notificationsEnabled: boolean;
   reducedMotion: boolean;
   theme: Theme;
 }) {
+  const [draft, setDraft] = useState(goal);
+
+  function updateGoal<K extends keyof GoalSettings>(key: K, value: GoalSettings[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
   return (
     <div className="settings-layout page-enter">
       <section className="panel settings-section">
@@ -2358,19 +3047,33 @@ function SettingsPage({
         <div className="form-grid">
           <label className="field">
             <span>目标院校</span>
-            <input defaultValue="目标院校 A · 计算机学院" />
+            <input
+              onChange={(event) => updateGoal("school", event.target.value)}
+              value={draft.school}
+            />
           </label>
           <label className="field">
             <span>初试目标分</span>
-            <input defaultValue="380" type="number" />
+            <input
+              onChange={(event) => updateGoal("targetScore", Number(event.target.value))}
+              value={draft.targetScore}
+              type="number"
+            />
           </label>
           <label className="field">
             <span>考试日期</span>
-            <input defaultValue="2027-12-25" type="date" />
+            <input
+              onChange={(event) => updateGoal("examDate", event.target.value)}
+              value={draft.examDate}
+              type="date"
+            />
           </label>
           <label className="field">
             <span>当前阶段</span>
-            <select defaultValue="基础准备期">
+            <select
+              onChange={(event) => updateGoal("stage", event.target.value)}
+              value={draft.stage}
+            >
               <option>基础准备期</option>
               <option>基础学习期</option>
               <option>强化期</option>
@@ -2380,12 +3083,15 @@ function SettingsPage({
           </label>
         </div>
         <div className="target-score-grid">
-          <label><span>政治</span><input defaultValue="70" type="number" /></label>
-          <label><span>英语</span><input defaultValue="75" type="number" /></label>
-          <label><span>数学</span><input defaultValue="120" type="number" /></label>
-          <label><span>专业课</span><input defaultValue="115" type="number" /></label>
+          <label><span>政治</span><input onChange={(event) => updateGoal("politics", Number(event.target.value))} value={draft.politics} type="number" /></label>
+          <label><span>英语</span><input onChange={(event) => updateGoal("english", Number(event.target.value))} value={draft.english} type="number" /></label>
+          <label><span>数学</span><input onChange={(event) => updateGoal("math", Number(event.target.value))} value={draft.math} type="number" /></label>
+          <label><span>专业课</span><input onChange={(event) => updateGoal("professional", Number(event.target.value))} value={draft.professional} type="number" /></label>
         </div>
-        <button className="primary-button" type="button">保存目标设置</button>
+        <button className="primary-button" onClick={() => onSaveGoal(draft)} type="button">
+          <Check size={16} />
+          保存目标设置
+        </button>
       </section>
 
       <section className="panel settings-section">
@@ -2409,7 +3115,11 @@ function SettingsPage({
           icon={Bell}
           label="学习提醒"
         >
-          <Toggle checked label="学习提醒" onChange={() => undefined} />
+          <Toggle
+            checked={notificationsEnabled}
+            label="学习提醒"
+            onChange={onToggleNotifications}
+          />
         </SettingRow>
       </section>
 
@@ -2423,6 +3133,19 @@ function SettingsPage({
             <Download size={16} />
             导出全部数据
           </button>
+          <label className="secondary-button file-button">
+            <Upload size={16} />
+            导入数据备份
+            <input
+              accept="application/json,.json"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onImport(file);
+                event.target.value = "";
+              }}
+              type="file"
+            />
+          </label>
           <button className="danger-button" onClick={onReset} type="button">
             <Trash2 size={16} />
             重置本机数据
@@ -2612,6 +3335,465 @@ function QuickAddDialog({
   );
 }
 
+function PlanEntryDialog({
+  days,
+  onClose,
+  onSubmit,
+}: {
+  days: WeekPlanDay[];
+  onClose: () => void;
+  onSubmit: (values: {
+    dayId: number;
+    title: string;
+    subject: string;
+    minutes: number;
+    addToToday: boolean;
+  }) => void;
+}) {
+  const [dayId, setDayId] = useState(days[3]?.id ?? days[0]?.id ?? 1);
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("数学");
+  const [minutes, setMinutes] = useState(60);
+  const [addToToday, setAddToToday] = useState(true);
+
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!title.trim()) return;
+          onSubmit({ dayId, title: title.trim(), subject, minutes, addToToday });
+        }}
+      >
+        <ModalHeading eyebrow="计划编排" onClose={onClose} title="新建本周任务" />
+        <div className="form-grid">
+          <label className="field">
+            <span>安排日期</span>
+            <select
+              onChange={(event) => setDayId(Number(event.target.value))}
+              value={dayId}
+            >
+              {days.map((day) => (
+                <option key={day.id} value={day.id}>
+                  {day.day} · {day.date}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>所属科目</span>
+            <select onChange={(event) => setSubject(event.target.value)} value={subject}>
+              {["数学", "英语", "专业课", "政治", "数学建模", "复盘"].map(
+                (item) => <option key={item}>{item}</option>,
+              )}
+            </select>
+          </label>
+        </div>
+        <label className="field">
+          <span>计划任务</span>
+          <input
+            autoFocus
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="例如：完成定积分应用题 20 题"
+            value={title}
+          />
+        </label>
+        <label className="field">
+          <span>计划时长（分钟）</span>
+          <input
+            min="10"
+            onChange={(event) => setMinutes(Number(event.target.value))}
+            step="5"
+            type="number"
+            value={minutes}
+          />
+        </label>
+        <label className="check-field">
+          <input
+            checked={addToToday}
+            onChange={(event) => setAddToToday(event.target.checked)}
+            type="checkbox"
+          />
+          <span>
+            <strong>同时加入今日任务</strong>
+            <small>加入后可立即进入专注模式并记录完成质量</small>
+          </span>
+        </label>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="primary-button" disabled={!title.trim()} type="submit">
+            <Plus size={16} />
+            创建计划
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function StudyRecordDialog({
+  activeSubjectId,
+  chapters,
+  onClose,
+  onSubmit,
+  subjectData,
+}: {
+  activeSubjectId: string;
+  chapters: Record<string, ChapterItem[]>;
+  onClose: () => void;
+  onSubmit: (values: {
+    subjectId: string;
+    chapterId: string;
+    minutes: number;
+    course: number;
+    practice: number;
+    accuracy: number;
+    mastery: number;
+  }) => void;
+  subjectData: SubjectSummary[];
+}) {
+  const firstChapter =
+    chapters[activeSubjectId]?.[0] ?? Object.values(chapters).flat()[0];
+  const [subjectId, setSubjectId] = useState(activeSubjectId);
+  const [chapterId, setChapterId] = useState(firstChapter.id);
+  const [minutes, setMinutes] = useState(60);
+  const [course, setCourse] = useState(firstChapter.course);
+  const [practice, setPractice] = useState(firstChapter.practice);
+  const [accuracy, setAccuracy] = useState(firstChapter.accuracy);
+  const [mastery, setMastery] = useState(firstChapter.mastery);
+
+  function loadChapter(nextSubjectId: string, nextChapterId: string) {
+    const chapter = chapters[nextSubjectId]?.find((item) => item.id === nextChapterId);
+    if (!chapter) return;
+    setChapterId(chapter.id);
+    setCourse(chapter.course);
+    setPractice(chapter.practice);
+    setAccuracy(chapter.accuracy);
+    setMastery(chapter.mastery);
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal-card modal-wide"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({ subjectId, chapterId, minutes, course, practice, accuracy, mastery });
+        }}
+      >
+        <ModalHeading eyebrow="能力更新" onClose={onClose} title="记录一次真实学习" />
+        <p className="modal-description">
+          填写学习后的状态；保存后会同时更新章节掌握度、科目进度和今日有效时长。
+        </p>
+        <div className="form-grid">
+          <label className="field">
+            <span>科目</span>
+            <select
+              onChange={(event) => {
+                const nextSubjectId = event.target.value;
+                const nextChapter = chapters[nextSubjectId]?.[0];
+                setSubjectId(nextSubjectId);
+                if (nextChapter) loadChapter(nextSubjectId, nextChapter.id);
+              }}
+              value={subjectId}
+            >
+              {subjectData.map((subject) => (
+                <option key={subject.id} value={subject.id}>{subject.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>章节 / 知识点</span>
+            <select
+              onChange={(event) => loadChapter(subjectId, event.target.value)}
+              value={chapterId}
+            >
+              {(chapters[subjectId] ?? []).map((chapter) => (
+                <option key={chapter.id} value={chapter.id}>
+                  {chapter.group} · {chapter.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="field">
+          <span>本次有效学习时长（分钟）</span>
+          <input
+            min="5"
+            onChange={(event) => setMinutes(Number(event.target.value))}
+            step="5"
+            type="number"
+            value={minutes}
+          />
+        </label>
+        <div className="record-metrics-grid">
+          <PercentField label="课程完成度" onChange={setCourse} value={course} />
+          <PercentField label="习题完成度" onChange={setPractice} value={practice} />
+          <PercentField label="本次正确率" onChange={setAccuracy} value={accuracy} />
+        </div>
+        <div className="mastery-input">
+          <div>
+            <span>掌握程度</span>
+            <strong>{mastery} / 5</strong>
+          </div>
+          <input
+            aria-label="掌握程度"
+            max="5"
+            min="1"
+            onChange={(event) => setMastery(Number(event.target.value))}
+            type="range"
+            value={mastery}
+          />
+          <div className="mastery-labels">
+            <span>完全不会</span>
+            <span>熟练掌握</span>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="success-button" type="submit">
+            <Check size={16} />
+            保存学习记录
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function MistakeEntryDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (
+    values: Omit<MistakeItem, "id" | "reviewCount" | "reviewed" | "corrected">,
+  ) => void;
+}) {
+  const [subject, setSubject] = useState("数学");
+  const [chapter, setChapter] = useState("");
+  const [source, setSource] = useState("");
+  const [difficulty, setDifficulty] = useState<MistakeItem["difficulty"]>("中等");
+  const [question, setQuestion] = useState("");
+  const [wrongAnswer, setWrongAnswer] = useState("");
+  const [correctAnswer, setCorrectAnswer] = useState("");
+  const [reason, setReason] = useState("");
+  const [method, setMethod] = useState("");
+  const [knowledge, setKnowledge] = useState("");
+
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal-card modal-wide"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!question.trim() || !correctAnswer.trim()) return;
+          onSubmit({
+            subject,
+            chapter: chapter.trim() || "待归类",
+            source: source.trim() || "手动录入",
+            difficulty,
+            question: question.trim(),
+            wrongAnswer: wrongAnswer.trim() || "未记录",
+            correctAnswer: correctAnswer.trim(),
+            reason: reason.trim() || "待复盘",
+            method: method.trim() || "待整理",
+            knowledge: knowledge.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+            nextReview: "明天",
+          });
+        }}
+      >
+        <ModalHeading eyebrow="错题录入" onClose={onClose} title="把错误转成下一次得分" />
+        <div className="form-grid three">
+          <label className="field">
+            <span>科目</span>
+            <select onChange={(event) => setSubject(event.target.value)} value={subject}>
+              {["数学", "英语", "专业课", "政治", "数学建模"].map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>难度</span>
+            <select
+              onChange={(event) => setDifficulty(event.target.value as MistakeItem["difficulty"])}
+              value={difficulty}
+            >
+              <option>基础</option>
+              <option>中等</option>
+              <option>困难</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>来源</span>
+            <input onChange={(event) => setSource(event.target.value)} placeholder="试卷 / 讲义 / 页码" value={source} />
+          </label>
+        </div>
+        <label className="field">
+          <span>章节 / 知识点</span>
+          <input onChange={(event) => setChapter(event.target.value)} placeholder="例如：高等数学 / 定积分" value={chapter} />
+        </label>
+        <label className="field">
+          <span>题目</span>
+          <textarea autoFocus onChange={(event) => setQuestion(event.target.value)} placeholder="录入题干或关键条件" value={question} />
+        </label>
+        <div className="form-grid">
+          <label className="field">
+            <span>我的错误答案</span>
+            <textarea onChange={(event) => setWrongAnswer(event.target.value)} value={wrongAnswer} />
+          </label>
+          <label className="field">
+            <span>正确答案</span>
+            <textarea onChange={(event) => setCorrectAnswer(event.target.value)} value={correctAnswer} />
+          </label>
+        </div>
+        <div className="form-grid">
+          <label className="field">
+            <span>错误原因</span>
+            <input onChange={(event) => setReason(event.target.value)} placeholder="概念混淆、计算失误…" value={reason} />
+          </label>
+          <label className="field">
+            <span>解题方法</span>
+            <input onChange={(event) => setMethod(event.target.value)} placeholder="下次应怎样判断与作答" value={method} />
+          </label>
+        </div>
+        <label className="field">
+          <span>关联知识点（逗号分隔）</span>
+          <input onChange={(event) => setKnowledge(event.target.value)} placeholder="定积分换元, 复合函数" value={knowledge} />
+        </label>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="primary-button" disabled={!question.trim() || !correctAnswer.trim()} type="submit">
+            <Plus size={16} />
+            录入并安排复习
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ScoreEntryDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (values: Omit<ScoreRecord, "id" | "total">) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [title, setTitle] = useState("全科模拟");
+  const [math, setMath] = useState(90);
+  const [english, setEnglish] = useState(65);
+  const [professional, setProfessional] = useState(95);
+  const [politics, setPolitics] = useState(60);
+  const [note, setNote] = useState("");
+  const total = math + english + professional + politics;
+
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({
+            date: formatInputDate(date),
+            title: title.trim() || "未命名测试",
+            math,
+            english,
+            professional,
+            politics,
+            note: note.trim(),
+          });
+        }}
+      >
+        <ModalHeading eyebrow="成绩反馈" onClose={onClose} title="录入一次测试成绩" />
+        <div className="score-total-preview">
+          <span>本次总分</span>
+          <strong>{total}</strong>
+          <small>保存后会更新预测分与目标差距</small>
+        </div>
+        <div className="form-grid">
+          <label className="field">
+            <span>测试名称</span>
+            <input onChange={(event) => setTitle(event.target.value)} value={title} />
+          </label>
+          <label className="field">
+            <span>测试日期</span>
+            <input onChange={(event) => setDate(event.target.value)} type="date" value={date} />
+          </label>
+        </div>
+        <div className="record-metrics-grid four">
+          <NumberField label="数学" max={150} onChange={setMath} value={math} />
+          <NumberField label="英语" max={100} onChange={setEnglish} value={english} />
+          <NumberField label="专业课" max={150} onChange={setProfessional} value={professional} />
+          <NumberField label="政治" max={100} onChange={setPolitics} value={politics} />
+        </div>
+        <label className="field">
+          <span>复盘备注</span>
+          <textarea onChange={(event) => setNote(event.target.value)} placeholder="最大失分点、时间分配或下一次调整" value={note} />
+        </label>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="primary-button" type="submit">
+            <Check size={16} />
+            保存成绩
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ModelingTaskDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (values: Omit<ModelingTeamTask, "id" | "status">) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [owner, setOwner] = useState("王进宇");
+  const [due, setDue] = useState(new Date().toISOString().slice(0, 10));
+
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!title.trim()) return;
+          onSubmit({ title: title.trim(), owner: owner.trim() || "待分配", due: formatChineseDate(due) });
+        }}
+      >
+        <ModalHeading eyebrow="建模协作" onClose={onClose} title="添加团队任务" />
+        <label className="field">
+          <span>任务名称</span>
+          <input autoFocus onChange={(event) => setTitle(event.target.value)} placeholder="例如：整理评价模型实验结果" value={title} />
+        </label>
+        <div className="form-grid">
+          <label className="field">
+            <span>负责人</span>
+            <input onChange={(event) => setOwner(event.target.value)} value={owner} />
+          </label>
+          <label className="field">
+            <span>截止日期</span>
+            <input onChange={(event) => setDue(event.target.value)} type="date" value={due} />
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="primary-button" disabled={!title.trim()} type="submit">
+            <Plus size={16} />
+            添加任务
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function TaskActionDialog({
   action,
   onClose,
@@ -2749,6 +3931,84 @@ function ConfirmDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function ModalHeading({
+  eyebrow,
+  onClose,
+  title,
+}: {
+  eyebrow: string;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="modal-heading">
+      <div>
+        <span className="eyebrow">{eyebrow}</span>
+        <h2>{title}</h2>
+      </div>
+      <button aria-label="关闭" className="icon-button" onClick={onClose} type="button">
+        <X size={18} />
+      </button>
+    </div>
+  );
+}
+
+function PercentField({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="field metric-field">
+      <span>{label}</span>
+      <div>
+        <input
+          max="100"
+          min="0"
+          onChange={(event) => onChange(Number(event.target.value))}
+          type="number"
+          value={value}
+        />
+        <b>%</b>
+      </div>
+    </label>
+  );
+}
+
+function NumberField({
+  label,
+  max,
+  onChange,
+  value,
+}: {
+  label: string;
+  max: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="field metric-field">
+      <span>{label}</span>
+      <div>
+        <input
+          max={max}
+          min="0"
+          onChange={(event) =>
+            onChange(Math.min(max, Math.max(0, Number(event.target.value))))
+          }
+          type="number"
+          value={value}
+        />
+        <b>/ {max}</b>
+      </div>
+    </label>
   );
 }
 
@@ -2976,7 +4236,10 @@ function ScoreGapRow({
         <strong>{label}</strong>
         <span>{value} / {target}</span>
       </div>
-      <ProgressBar tone={gap > 20 ? "red" : gap > 8 ? "yellow" : "green"} value={(value / target) * 100} />
+      <ProgressBar
+        tone={gap > 20 ? "red" : gap > 8 ? "yellow" : "green"}
+        value={(value / Math.max(1, target)) * 100}
+      />
       <small>差 {gap} 分</small>
     </div>
   );
@@ -3120,6 +4383,55 @@ function priorityTone(priority: Priority) {
   return "gray";
 }
 
+function cloneChapterData(source: Record<string, ChapterItem[]>) {
+  return Object.fromEntries(
+    Object.entries(source).map(([subjectId, chapters]) => [
+      subjectId,
+      chapters.map((chapter) => ({ ...chapter })),
+    ]),
+  );
+}
+
+function cloneWeekPlan(source: WeekPlanDay[]) {
+  return source.map((day) => ({ ...day, tasks: [...day.tasks] }));
+}
+
+function scoreLabelForSubject(subjectId: string, score: ScoreRecord) {
+  if (subjectId === "math") return `${score.math} / 150`;
+  if (subjectId === "english") return `${score.english} / 100`;
+  if (subjectId === "professional") return `${score.professional} / 150`;
+  if (subjectId === "politics") return `${score.politics} / 100`;
+  return "独立统计";
+}
+
+function chapterStatus(
+  mastery: number,
+  practice: number,
+): ChapterItem["status"] {
+  if (mastery >= 5 && practice >= 80) return "已掌握";
+  if (mastery >= 4 && practice >= 60) return "已完成";
+  if (mastery <= 1 && practice > 0) return "已遗忘";
+  if (mastery <= 2 && practice >= 30) return "需巩固";
+  if (practice > 0) return "学习中";
+  return "未开始";
+}
+
+function nextReviewLabel(rating: 1 | 2 | 3) {
+  if (rating === 1) return "明天";
+  if (rating === 2) return "3 天后";
+  return "7 天后";
+}
+
+function downloadText(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function formatMinutes(minutes: number) {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
@@ -3128,15 +4440,33 @@ function formatMinutes(minutes: number) {
   return `${hours} 小时 ${rest} 分`;
 }
 
+function formatHours(hours: number) {
+  const whole = Math.floor(hours);
+  const minutes = Math.round((hours - whole) * 60);
+  if (!whole) return `${minutes} 分钟`;
+  if (!minutes) return `${whole} 小时`;
+  return `${whole} 小时 ${minutes} 分`;
+}
+
 function formatClock(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
-function daysUntilExam() {
-  const exam = new Date("2027-12-25T00:00:00+08:00").getTime();
+function daysUntilExam(examDate: string) {
+  const exam = new Date(`${examDate}T00:00:00+08:00`).getTime();
   return Math.max(0, Math.ceil((exam - Date.now()) / 86_400_000));
+}
+
+function formatInputDate(date: string) {
+  const [, month, day] = date.split("-");
+  return `${month}/${day}`;
+}
+
+function formatChineseDate(date: string) {
+  const [, month, day] = date.split("-");
+  return `${Number(month)}月${Number(day)}日`;
 }
 
 function greeting() {

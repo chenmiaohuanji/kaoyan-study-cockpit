@@ -64,6 +64,48 @@ export type MistakeItem = {
   corrected: boolean;
 };
 
+export type ScoreRecord = {
+  id: number;
+  date: string;
+  title: string;
+  total: number;
+  math: number;
+  english: number;
+  professional: number;
+  politics: number;
+  note: string;
+};
+
+export type WeekPlanDay = {
+  id: number;
+  day: string;
+  date: string;
+  planned: number;
+  actual: number;
+  tasks: string[];
+  state: "已完成" | "部分完成" | "进行中" | "待开始";
+};
+
+export type ModelingTeamTask = {
+  id: number;
+  title: string;
+  owner: string;
+  due: string;
+  status: "待开始" | "进行中" | "已排期" | "已完成";
+};
+
+export type GoalSettings = {
+  school: string;
+  direction: string;
+  targetScore: number;
+  examDate: string;
+  stage: string;
+  politics: number;
+  english: number;
+  math: number;
+  professional: number;
+};
+
 export const initialTasks: StudyTask[] = [
   {
     id: 1,
@@ -498,12 +540,12 @@ export const weeklyTrend = [
   { day: "今天", hours: 3.6, completion: 58 },
 ];
 
-export const scoreTrend = [
-  { date: "04/18", total: 298, math: 78, english: 64, professional: 96, politics: 60 },
-  { date: "05/09", total: 306, math: 84, english: 67, professional: 96, politics: 59 },
-  { date: "05/30", total: 312, math: 88, english: 68, professional: 98, politics: 58 },
-  { date: "06/20", total: 318, math: 91, english: 70, professional: 99, politics: 58 },
-  { date: "07/11", total: 323, math: 92, english: 71, professional: 102, politics: 58 },
+export const scoreTrend: ScoreRecord[] = [
+  { id: 1, date: "04/18", title: "全科模拟 01", total: 298, math: 78, english: 64, professional: 96, politics: 60, note: "数学计算失分较多" },
+  { id: 2, date: "05/09", title: "全科模拟 02", total: 306, math: 84, english: 67, professional: 96, politics: 59, note: "英语阅读速度改善" },
+  { id: 3, date: "05/30", title: "全科模拟 03", total: 312, math: 88, english: 68, professional: 98, politics: 58, note: "专业课基础题稳定" },
+  { id: 4, date: "06/20", title: "全科模拟 04", total: 318, math: 91, english: 70, professional: 99, politics: 58, note: "政治用时偏短" },
+  { id: 5, date: "07/11", title: "全科模拟 05", total: 323, math: 92, english: 71, professional: 102, politics: 58, note: "总分保持温和上升" },
 ];
 
 export const stages = [
@@ -554,8 +596,9 @@ export const stages = [
   },
 ];
 
-export const weekPlan = [
+export const weekPlan: WeekPlanDay[] = [
   {
+    id: 1,
     day: "周一",
     date: "07/20",
     planned: 6,
@@ -564,6 +607,7 @@ export const weekPlan = [
     state: "已完成",
   },
   {
+    id: 2,
     day: "周二",
     date: "07/21",
     planned: 6,
@@ -572,6 +616,7 @@ export const weekPlan = [
     state: "部分完成",
   },
   {
+    id: 3,
     day: "周三",
     date: "07/22",
     planned: 6.5,
@@ -580,6 +625,7 @@ export const weekPlan = [
     state: "已完成",
   },
   {
+    id: 4,
     day: "周四",
     date: "07/23",
     planned: 6,
@@ -588,6 +634,7 @@ export const weekPlan = [
     state: "进行中",
   },
   {
+    id: 5,
     day: "周五",
     date: "07/24",
     planned: 6,
@@ -596,6 +643,7 @@ export const weekPlan = [
     state: "待开始",
   },
   {
+    id: 6,
     day: "周六",
     date: "07/25",
     planned: 7,
@@ -604,6 +652,7 @@ export const weekPlan = [
     state: "待开始",
   },
   {
+    id: 7,
     day: "周日",
     date: "07/26",
     planned: 3,
@@ -613,9 +662,21 @@ export const weekPlan = [
   },
 ];
 
-export const modelingTasks = [
-  { title: "完成 TOPSIS 模型代码模板", owner: "王进宇", due: "07月24日", status: "进行中" },
-  { title: "整理历年国赛 C 题数据源", owner: "陈同学", due: "07月25日", status: "待开始" },
-  { title: "论文摘要与假设互审", owner: "团队", due: "07月27日", status: "待开始" },
-  { title: "完成一次 8 小时模拟赛", owner: "团队", due: "08月02日", status: "已排期" },
+export const modelingTasks: ModelingTeamTask[] = [
+  { id: 1, title: "完成 TOPSIS 模型代码模板", owner: "王进宇", due: "07月24日", status: "进行中" },
+  { id: 2, title: "整理历年国赛 C 题数据源", owner: "陈同学", due: "07月25日", status: "待开始" },
+  { id: 3, title: "论文摘要与假设互审", owner: "团队", due: "07月27日", status: "待开始" },
+  { id: 4, title: "完成一次 8 小时模拟赛", owner: "团队", due: "08月02日", status: "已排期" },
 ];
+
+export const initialGoalSettings: GoalSettings = {
+  school: "目标院校 A · 计算机学院",
+  direction: "网络安全方向",
+  targetScore: 380,
+  examDate: "2027-12-25",
+  stage: "基础准备期",
+  politics: 70,
+  english: 75,
+  math: 120,
+  professional: 115,
+};
